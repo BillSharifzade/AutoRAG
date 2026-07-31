@@ -49,8 +49,10 @@ _BUILDER_HTML = (Path(__file__).parent / "builder.html").read_text(encoding="utf
 
 from ..alerts import ConsoleNotifier
 from ..audit import AuditEvent
+from ..engineer.guard import ENGINEER_ROLE
 from ..conversations import Conversation, StoredMessage
 from ..scheduler import AlertScheduler
+from ..selfknowledge.handbook import guides_for, onboarding_prompt
 from ..knowledge.classify import suggest_data_class
 from ..rbac import INGEST_ROLES, visible_classes
 from ..domain import Answer, DataClass, Principal
@@ -416,6 +418,9 @@ def create_app(
             "roles": list(principal.roles),
             "language": language_for(principal, None),
             "can_author_skills": can_author(principal),
+            "can_edit_code": (
+                plat.settings.engineer_enabled and ENGINEER_ROLE in principal.roles
+            ),
         }
 
     @app.post("/v1/me/language")
@@ -555,6 +560,51 @@ def create_app(
             principal, skill_id, connector_id=req.connector_id, name=req.name
         )
         return defn.to_dict()
+
+    # --- Platform self-knowledge (onboarding tour) -------------------------
+
+    @app.get("/v1/onboarding")
+    async def onboarding(principal: Principal = Depends(principal_from)) -> dict:
+        """What the first-visit tip offers, and the prompt it sends if accepted."""
+        return {
+            "roles": list(principal.roles),
+            "guides": [
+                {"role": role, "guide": text} for role, text in guides_for(principal)
+            ],
+            "prompt": onboarding_prompt(principal),
+        }
+
+    # --- Code changes (karag_engineer only) --------------------------------
+    # An AI turn can only ever *propose*; applying is this explicit human step.
+
+    @app.get("/v1/code/proposals")
+    async def list_proposals(
+        status: str | None = None, principal: Principal = Depends(principal_from)
+    ) -> dict:
+        return {
+            "proposals": [
+                p.to_dict(include_diff=False)
+                for p in plat.code_changes.list(principal, status=status)
+            ]
+        }
+
+    @app.get("/v1/code/proposals/{proposal_id}")
+    async def get_proposal(
+        proposal_id: str, principal: Principal = Depends(principal_from)
+    ) -> dict:
+        return plat.code_changes.get(principal, proposal_id).to_dict()
+
+    @app.post("/v1/code/proposals/{proposal_id}/apply")
+    async def apply_proposal(
+        proposal_id: str, principal: Principal = Depends(principal_from)
+    ) -> dict:
+        return plat.code_changes.apply(principal, proposal_id).to_dict(include_diff=False)
+
+    @app.post("/v1/code/proposals/{proposal_id}/discard")
+    async def discard_proposal(
+        proposal_id: str, principal: Principal = Depends(principal_from)
+    ) -> dict:
+        return plat.code_changes.discard(principal, proposal_id).to_dict(include_diff=False)
 
     # --- Proactive alerts (§15) --------------------------------------------
 

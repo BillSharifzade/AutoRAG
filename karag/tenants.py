@@ -479,18 +479,28 @@ class DirectoryService:
         if not ({"admin", "platform_admin", "ceo"} & set(principal.roles)):
             raise AccessDenied("managing accounts requires an admin or ceo role")
 
-    @staticmethod
+    # Roles that reach beyond a single tenant: only a platform operator may
+    # grant them, and only if they hold them.
+    PLATFORM_ROLES = frozenset({"platform_admin", "karag_engineer"})
+
+    @classmethod
     def _reject_privilege_escalation(
-        principal: Principal, roles: tuple[str, ...]
+        cls, principal: Principal, roles: tuple[str, ...]
     ) -> None:
         """A tenant admin must not be able to mint platform operators.
 
         Without this, "admin of Evar" could create a ``platform_admin`` account
         and read every other company's tenant list — precisely the cross-tenant
-        leak §13 ranks first.
+        leak §13 ranks first. ``karag_engineer`` is held to the same rule for a
+        sharper reason: it can propose changes to the source that serves every
+        tenant, so a customer's admin must never be able to grant it.
         """
-        if "platform_admin" in roles and "platform_admin" not in principal.roles:
-            raise AccessDenied("only a platform_admin may grant the platform_admin role")
+        requested = cls.PLATFORM_ROLES & set(roles)
+        if requested and not (requested <= set(principal.roles)):
+            missing = ", ".join(sorted(requested - set(principal.roles)))
+            raise AccessDenied(
+                f"only a platform operator holding it may grant: {missing}"
+            )
 
 
 class DirectoryResolver:

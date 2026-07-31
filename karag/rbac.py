@@ -36,6 +36,10 @@ ROLE_DATA_CLASSES: dict[str, frozenset[DataClass]] = {
     # no business data — running the platform is not a reason to read a
     # customer's financials, and §7's "never" has to hold for operators too.
     "platform_admin": frozenset({DC.PUBLIC}),
+    # KIT's engineer: may propose changes to KARAG's own source (reviewed by a
+    # human before anything lands). Like platform_admin, no business data —
+    # working on the platform is not a reason to read what runs on it.
+    "karag_engineer": frozenset({DC.PUBLIC}),
     # CEO / superadmin of *their own tenant* — never another tenant's data.
     "ceo": frozenset(
         {DC.PUBLIC, DC.OPERATIONAL, DC.HR, DC.FINANCIAL, DC.REGULATED}

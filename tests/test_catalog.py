@@ -194,7 +194,11 @@ def test_other_tenant_cannot_read_or_delete_a_definition(platform, sales_db):
 def test_uncleared_user_never_sees_the_skill(platform, sales_db):
     conn = _connector(platform, sales_db)
     _skill(platform, conn.id)
-    assert [s.name for s in platform.registry.visible_for(HR)] == []
+    # HR still sees the public platform skills (handbook, source lookup) — what
+    # they must never see is the financial one they hold no clearance for.
+    assert "sales_by_store_live" not in {
+        s.name for s in platform.registry.visible_for(HR)
+    }
 
 
 # ---------- definition validation ----------

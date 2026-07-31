@@ -86,7 +86,10 @@ async def test_per_request_language_overrides_the_deployment_default():
     plat, recorder = _platform(language="ru")
     await plat.orchestrator.ask(CEO, "hello", language="en")
     system = recorder.systems[-1]
-    assert "English" in system and "Russian" not in system
+    # Assert on the directive itself: the platform handbook also mentions the
+    # supported languages by name, so a bare "Russian" substring proves nothing.
+    assert "Always answer in English" in system
+    assert "Always answer in Russian" not in system
 
 
 async def test_language_clause_comes_after_the_assistant_instruction():
@@ -97,7 +100,7 @@ async def test_language_clause_comes_after_the_assistant_instruction():
     )
     await plat.assistant_service.ask(CEO, asst.id, "hello")
     system = recorder.systems[-1]
-    assert system.index("Be extremely concise.") < system.index("Tajik")
+    assert system.index("Be extremely concise.") < system.index("Always answer in Tajik")
 
 
 async def test_assistant_language_wins_over_the_callers_preference():

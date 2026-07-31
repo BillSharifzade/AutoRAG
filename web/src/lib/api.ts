@@ -58,6 +58,37 @@ export interface Me {
   roles: string[];
   language: Language;
   can_author_skills: boolean;
+  can_edit_code: boolean;
+}
+
+/* ---------- platform self-knowledge ---------- */
+
+export interface Onboarding {
+  roles: string[];
+  guides: { role: string; guide: string }[];
+  /** the question the "show me around" tip asks on the user's behalf */
+  prompt: string;
+}
+
+/* ---------- AI-authored code changes ---------- */
+
+export interface CodeProposal {
+  id: string;
+  author: string;
+  summary: string;
+  branch: string;
+  files_changed: string[];
+  insertions: number;
+  deletions: number;
+  tests_passed: boolean;
+  tests_summary: string;
+  status: "pending" | "applied" | "discarded";
+  model: string;
+  created_at: number;
+  resolved_at: number;
+  resolved_by: string;
+  /** present only on the detail fetch */
+  diff?: string;
 }
 
 /* ---------- knowledge catalogue ---------- */
@@ -338,6 +369,26 @@ export const api = {
 
   skills: (token: string) =>
     request<{ skills: SkillInfo[] }>(token, "/v1/skills"),
+
+  onboarding: (token: string) => request<Onboarding>(token, "/v1/onboarding"),
+
+  code: {
+    list: (token: string, status?: string) =>
+      request<{ proposals: CodeProposal[] }>(
+        token,
+        `/v1/code/proposals${status ? `?status=${status}` : ""}`,
+      ),
+    get: (token: string, id: string) =>
+      request<CodeProposal>(token, `/v1/code/proposals/${id}`),
+    apply: (token: string, id: string) =>
+      request<CodeProposal>(token, `/v1/code/proposals/${id}/apply`, {
+        method: "POST",
+      }),
+    discard: (token: string, id: string) =>
+      request<CodeProposal>(token, `/v1/code/proposals/${id}/discard`, {
+        method: "POST",
+      }),
+  },
 
   ask: (
     token: string,

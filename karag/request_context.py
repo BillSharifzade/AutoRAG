@@ -40,6 +40,28 @@ def current_request_context() -> dict:
     return _ctx.get()
 
 
+def mark_untrusted_content(source: str) -> None:
+    """Record that this turn's context contains content KARAG did not author.
+
+    Retrieved document passages, uploaded files and tool output are *data*, and
+    the system prompt says so — but a source-code edit is too consequential to
+    rest on the model having obeyed that instruction. The orchestrator marks the
+    turn whenever such content is present, and the code-change guard refuses
+    outright, so a sentence buried in an uploaded PDF cannot talk the platform
+    into rewriting itself.
+    """
+    ctx = dict(_ctx.get())
+    sources = set(ctx.get("untrusted_sources", ()))
+    sources.add(source)
+    ctx["untrusted_sources"] = tuple(sorted(sources))
+    _ctx.set(ctx)
+
+
+def untrusted_sources() -> tuple[str, ...]:
+    """Which kinds of untrusted content this turn pulled in, if any."""
+    return tuple(_ctx.get().get("untrusted_sources", ()))
+
+
 def enrich_event(event: "AuditEvent") -> "AuditEvent":
     """Fill an event's device/role fields from the active request, if unset."""
     ctx = _ctx.get()

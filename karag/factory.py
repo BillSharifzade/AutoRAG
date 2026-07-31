@@ -18,6 +18,14 @@ from .connectors.registry import (
     InMemoryConnectorStore,
     SqliteConnectorStore,
 )
+from .engineer.proposals import (
+    InMemoryProposalStore,
+    ProposalStore,
+    SqliteProposalStore,
+)
+from .engineer.service import CodeChangeService
+from .engineer.skills import engineer_skills
+from .engineer.workspace import GitWorkspace
 from .conversations import (
     ConversationStore,
     InMemoryConversationStore,
@@ -36,6 +44,9 @@ from .scheduler import (
     InMemoryAlertRuleStore,
     SqliteAlertRuleStore,
 )
+from .selfknowledge.codebase import CodebaseIndex
+from .selfknowledge.skills import platform_skills
+from .skills.admin_skills import admin_skills
 from .skills.catalog import SkillCatalog
 from .skills.definitions import (
     InMemorySkillDefinitionStore,
@@ -159,6 +170,31 @@ def build_definition_store(s: Settings) -> SkillDefinitionStore:
     raise ConfigError(f"unknown app_store: {s.app_store}")
 
 
+def build_proposal_store(s: Settings) -> ProposalStore:
+    if s.app_store == "memory":
+        return InMemoryProposalStore()
+    if s.app_store == "sqlite":
+        return SqliteProposalStore(s.app_db_path)
+    raise ConfigError(f"unknown app_store: {s.app_store}")
+
+
+def build_engineer_generator(s: Settings) -> Generator | None:
+    """The stronger model reserved for turns that may write code.
+
+    Returns ``None`` when self-modification is disabled, or when the primary
+    generator is already the engineer model (no point holding two clients), or
+    when the configured generator isn't Anthropic — the Opus requirement only
+    makes sense on the provider that has it.
+    """
+    if not s.engineer_enabled or not s.engineer_model:
+        return None
+    if s.generator != "anthropic" or s.anthropic_model == s.engineer_model:
+        return None
+    from .llm.anthropic_adapter import AnthropicGenerator
+
+    return AnthropicGenerator(model=s.engineer_model, api_key=s.anthropic_api_key)
+
+
 def build_alert_store(s: Settings) -> AlertRuleStore:
     if s.app_store == "memory":
         return InMemoryAlertRuleStore()
@@ -215,6 +251,8 @@ class Platform:
     executor: SkillExecutor
     alerts: AlertRuleStore
     alert_service: AlertService
+    codebase: CodebaseIndex
+    code_changes: CodeChangeService
     # definitions that failed to materialise at boot (missing connector, unset
     # env var). Surfaced by /health so a broken skill is visible, not silent.
     skill_load_errors: list[str] = field(default_factory=list)
@@ -242,6 +280,8 @@ def build_platform(
         gateway, retrieval, reg, executor,
         top_k=s.top_k, max_iterations=s.max_iterations,
         audit=audit_log, usage=usage_rec, language=s.default_language,
+        self_knowledge=s.self_knowledge,
+        engineer_generator=build_engineer_generator(s),
     )
     assistants = build_assistant_registry(s)
     assistant_service = AssistantService(assistants, orchestrator)
@@ -257,7 +297,20 @@ def build_platform(
 
     directory = build_directory(s)
     alert_store = build_alert_store(s)
-    return Platform(
+
+    # --- self-knowledge and self-modification --------------------------------
+    codebase = CodebaseIndex(s.repo_root)
+    code_changes = CodeChangeService(
+        GitWorkspace(s.repo_root), build_proposal_store(s), audit=audit_log
+    )
+    if s.self_knowledge:
+        for skill in platform_skills(codebase):
+            reg.register(skill)
+    if s.engineer_enabled:
+        for skill in engineer_skills(code_changes):
+            reg.register(skill)
+
+    platform = Platform(
         settings=s,
         gateway=gateway,
         store=store,
@@ -278,5 +331,14 @@ def build_platform(
         executor=executor,
         alerts=alert_store,
         alert_service=AlertService(alert_store, audit=audit_log),
+        codebase=codebase,
+        code_changes=code_changes,
         skill_load_errors=load_errors,
     )
+
+    # Operational skills need the assembled platform (they call its services
+    # under the caller's own Principal). The registry is shared by reference,
+    # so registering here still reaches the orchestrator built above.
+    for skill in admin_skills(platform, audit=audit_log):
+        reg.register(skill)
+    return platform

@@ -10,6 +10,7 @@ import {
   AudioLines,
   BookOpenText,
   Check,
+  Compass,
   Copy,
   Database,
   Download,
@@ -46,7 +47,7 @@ import {
   type StoredChatMessage,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { BrandLogo, Chip, Picker, TypingDots } from "@/components/ui";
+import { BrandLogo, Button, Chip, Picker, TypingDots } from "@/components/ui";
 
 interface Att extends ChatAttachment {
   id: string;
@@ -443,6 +444,88 @@ function Composer({
   );
 }
 
+/* ---------- first-visit tip ---------- */
+
+/* KARAG knows what it is and what this user's roles allow, so a new user gets
+   one offer to be shown around rather than a static tour. Dismissal is
+   remembered per user so it appears once, not every time the thread empties. */
+function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
+  const { token, me } = useAuth();
+  const [dismissed, setDismissed] = useState(true);
+  const [prompt, setPrompt] = useState("");
+
+  const storageKey = me ? `karag_tour_seen:${me.tenant_id}:${me.user_id}` : "";
+
+  useEffect(() => {
+    if (!token || !storageKey) return;
+    if (localStorage.getItem(storageKey) === "1") return;
+    api
+      .onboarding(token)
+      .then((o) => {
+        setPrompt(o.prompt);
+        setDismissed(false);
+      })
+      .catch(() => setDismissed(true));
+  }, [token, storageKey]);
+
+  const close = () => {
+    setDismissed(true);
+    if (storageKey) localStorage.setItem(storageKey, "1");
+  };
+
+  if (dismissed || !prompt) return null;
+
+  const roleLabel = (me?.roles ?? []).join(", ") || "your role";
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0, y: -8, height: 0 }}
+        animate={{ opacity: 1, y: 0, height: "auto" }}
+        exit={{ opacity: 0, height: 0 }}
+        className="mb-5 overflow-hidden"
+      >
+        <div className="flex items-start gap-3 rounded-2xl border border-accent/25 bg-accent-soft px-4 py-3.5">
+          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-surface text-accent">
+            <Compass className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[13.5px] font-semibold text-accent-strong">
+              New here? I can show you around.
+            </p>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-mut">
+              I&apos;ll explain what KARAG does and what you can do as{" "}
+              <span className="font-medium">{roleLabel}</span> — tailored to your
+              access, not a generic manual.
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                onClick={() => {
+                  close();
+                  onAsk(prompt);
+                }}
+              >
+                Show me around
+              </Button>
+              <Button size="sm" variant="ghost" onClick={close}>
+                Not now
+              </Button>
+            </div>
+          </div>
+          <button
+            onClick={close}
+            aria-label="Dismiss"
+            className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-faint transition-colors hover:bg-surface hover:text-ink"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 /* ---------- thread ---------- */
 
 export function ChatThread({
@@ -689,6 +772,8 @@ export function ChatThread({
               </p>
             </div>
           </div>
+
+          <OnboardingTip onAsk={(q) => void send(q)} />
 
           <Composer {...composerProps} autoFocus />
 

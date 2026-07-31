@@ -55,6 +55,16 @@ class Settings:
     # answer language: auto (mirror the user) | ru | tg | en
     default_language: str = "auto"
 
+    # platform self-knowledge: hand the assistant its own handbook + role guide,
+    # and let it read its own source to answer implementation questions.
+    self_knowledge: bool = True
+    repo_root: str = "."
+
+    # code changes run on a stronger model than ordinary chat; empty disables
+    # the self-modification capability entirely.
+    engineer_model: str = "claude-opus-4-8"
+    engineer_enabled: bool = True
+
     # ollama
     ollama_base_url: str = "http://localhost:11434"
     ollama_chat_model: str = "llama3.1"
@@ -99,6 +109,10 @@ class Settings:
             app_store=_get("KARAG_APP_STORE", "memory"),
             app_db_path=_get("KARAG_APP_DB", "karag_app.db"),
             default_language=_get("KARAG_LANGUAGE", "auto"),
+            self_knowledge=_get("KARAG_SELF_KNOWLEDGE", "1") != "0",
+            repo_root=_get("KARAG_REPO_ROOT", "."),
+            engineer_model=_get("KARAG_ENGINEER_MODEL", "claude-opus-4-8"),
+            engineer_enabled=_get("KARAG_ENGINEER_ENABLED", "1") != "0",
             pg_dsn=_get("KARAG_PG_DSN", "postgresql://localhost/karag"),
             top_k=int(_get("KARAG_TOP_K", "5")),
             max_iterations=int(_get("KARAG_MAX_ITERATIONS", "4")),

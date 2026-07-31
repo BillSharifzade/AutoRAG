@@ -16,10 +16,13 @@ from __future__ import annotations
 
 from .audit import AuditEvent, AuditLog, NullAuditLog
 from .domain import Answer, Artifact, Citation, Principal
+from .engineer.guard import ENGINEER_ROLE
 from .errors import SkillNotFound, ValidationError
 from .knowledge.rag import _snippet
 from .knowledge.retrieve import RetrievalService
-from .llm.base import ChatMessage, Gateway, ImagePart, MsgRole
+from .llm.base import ChatMessage, Gateway, Generator, ImagePart, MsgRole
+from .request_context import mark_untrusted_content
+from .selfknowledge.handbook import system_context
 from .skills.executor import SkillExecutor
 from .skills.registry import SkillRegistry
 from .usage import UsageRecorder
@@ -78,6 +81,8 @@ class Orchestrator:
         audit: AuditLog | None = None,
         usage: UsageRecorder | None = None,
         language: str = "auto",
+        self_knowledge: bool = True,
+        engineer_generator: "Generator | None" = None,
     ) -> None:
         self._gw = gateway
         self._retriever = retriever
@@ -89,6 +94,10 @@ class Orchestrator:
         self._usage = usage
         # deployment-wide default; a per-request/per-assistant value overrides it
         self._language = language
+        # give the assistant the platform handbook + the caller's role guide
+        self._self_knowledge = self_knowledge
+        # a stronger model reserved for turns that may write code (Opus 4.8)
+        self._engineer_generator = engineer_generator
 
     async def ask(
         self,
@@ -105,6 +114,15 @@ class Orchestrator:
         chunks = await self._retriever.retrieve(principal, query, top_k=self._top_k)
         context = "\n".join(f"[{i}] {r.chunk.text}" for i, r in enumerate(chunks, 1))
 
+        # Mark what KARAG did not author. Retrieved passages and attached images
+        # are data, and the system prompt says so — but the code-change guard
+        # refuses outright on a marked turn rather than trusting that the model
+        # obeyed. See karag.engineer.guard.
+        if chunks:
+            mark_untrusted_content("retrieved documents")
+        if images:
+            mark_untrusted_content("attached image")
+
         # --- data plane: only the skills this principal may see (optionally
         #     narrowed by an assistant's allow-list — never widened) ---
         skills = self._registry.visible_for(principal)
@@ -112,6 +130,10 @@ class Orchestrator:
             skills = [s for s in skills if s.name in allowed_skill_names]
         tools = [s.to_tool_spec() for s in skills] or None
         parts = [_SYSTEM]
+        if self._self_knowledge:
+            # KARAG can explain and operate itself; the handbook is small, the
+            # source is reachable through skills when the handbook falls short.
+            parts.append(system_context(principal))
         if system_extra:
             parts.append(system_extra)
         # Language goes last so it wins over an assistant instruction written in
@@ -135,8 +157,15 @@ class Orchestrator:
         queries_shown: list[str] = []
         artifacts: list[Artifact] = []
 
+        # An engineer's turn may end in a source-code change, so it runs on the
+        # stronger model for the whole turn rather than trying to guess mid-loop
+        # whether a code edit is coming.
+        generator = self._gw.generator
+        if self._engineer_generator is not None and ENGINEER_ROLE in principal.roles:
+            generator = self._engineer_generator
+
         for _ in range(self._max_iterations):
-            resp = await self._gw.generate(system=system, messages=messages, tools=tools)
+            resp = await generator.generate(system=system, messages=messages, tools=tools)
 
             if resp.stop_reason == "refusal":
                 return self._finalize(
@@ -157,9 +186,10 @@ class Orchestrator:
                         skills_used=skills_used,
                         queries_shown=queries_shown,
                         artifacts=artifacts,
-                        diagnostics={"model": self._gw.model, "usage": resp.usage},
+                        diagnostics={"model": generator.model, "usage": resp.usage},
                     ),
                     resp.usage,
+                    model=generator.model,
                 )
 
             # Record the assistant's tool-call turn so the provider can pair
@@ -205,15 +235,18 @@ class Orchestrator:
             {},
         )
 
-    def _finalize(self, principal: Principal, answer: Answer, usage: dict) -> Answer:
+    def _finalize(
+        self, principal: Principal, answer: Answer, usage: dict, *, model: str = ""
+    ) -> Answer:
         if self._usage is not None:
             # The model is recorded alongside the tokens so usage can be priced
-            # per model — a fallback request costs what the fallback charges.
+            # per model — a fallback request costs what the fallback charges,
+            # and an engineer's turn on Opus is billed as Opus.
             self._usage.record(
                 tenant_id=principal.tenant_id,
                 user_id=principal.user_id,
                 usage=usage,
-                model=self._gw.model,
+                model=model or self._gw.model,
             )
         self._audit.record(
             AuditEvent(
