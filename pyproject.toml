@@ -1,0 +1,28 @@
+[project]
+name = "karag"
+version = "0.1.0"
+description = "KARAG — Koinot Auto RAG: multi-tenant, RBAC-governed RAG + verified skills on Claude."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2", "python-multipart>=0.0.9"]
+ollama = ["httpx>=0.27"]
+anthropic = ["anthropic>=0.40", "httpx>=0.27"]
+pgvector = ["psycopg[binary]>=3.1"]
+ingestion = ["pypdf>=4"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["karag*"]
+
+[tool.setuptools.package-data]
+"karag.api" = ["ui.html"]

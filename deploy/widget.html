@@ -1,0 +1,43 @@
+<!-- Embeddable KARAG chat widget. Drop into any company portal; set API_BASE
+     and TOKEN (ideally minted per-user by your SSO as a KARAG JWT). -->
+<div id="karag-widget" style="max-width:520px;font-family:system-ui,Arial,sans-serif">
+  <div style="border:1px solid #e7ebf1;border-radius:12px;overflow:hidden">
+    <div style="background:#27409e;color:#fff;padding:10px 14px;font-weight:700">KARAG assistant</div>
+    <div id="karag-log" style="padding:12px;min-height:120px;font-size:14px"></div>
+    <form id="karag-form" style="display:flex;border-top:1px solid #e7ebf1">
+      <input id="karag-q" placeholder="Ask about policies or live figures…"
+             style="flex:1;border:0;padding:11px;font-size:14px" autocomplete="off"/>
+      <button style="border:0;background:#3554d1;color:#fff;padding:0 16px;cursor:pointer">Ask</button>
+    </form>
+  </div>
+</div>
+<script>
+const API_BASE = "http://localhost:8000";     // your KARAG endpoint
+const TOKEN    = "REPLACE_WITH_BEARER_TOKEN";  // per-user token / JWT
+const log = document.getElementById("karag-log");
+function add(role, text) {
+  const d = document.createElement("div");
+  d.style.margin = "6px 0";
+  d.innerHTML = "<b>" + role + ":</b> " + text;
+  log.appendChild(d);
+}
+document.getElementById("karag-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = document.getElementById("karag-q");
+  const query = q.value.trim(); if (!query) return;
+  add("You", query); q.value = "";
+  try {
+    const r = await fetch(API_BASE + "/v1/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN },
+      body: JSON.stringify({ query }),
+    });
+    const data = await r.json();
+    add("KARAG", (data.text || "(no answer)"));
+    if (data.citations && data.citations.length)
+      add("Sources", data.citations.map(c => c.title).join(", "));
+    if (data.queries_shown && data.queries_shown.length)
+      add("Query", "<code>" + data.queries_shown.join("; ") + "</code>");
+  } catch (err) { add("Error", String(err)); }
+});
+</script>

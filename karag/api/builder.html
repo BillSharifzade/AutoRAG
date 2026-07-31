@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>KARAG · Assistant Builder</title>
+<style>
+:root{--ink:#0f1b2d;--mut:#64748b;--line:#e7ebf1;--bg:#f5f7fa;--surf:#fff;--accent:#3554d1;--accent-d:#27409e;--good:#0ca678;--dang:#d04545}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg)}
+header{display:flex;gap:10px;align-items:center;padding:10px 16px;background:var(--surf);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+.logo{font-weight:800;letter-spacing:1.5px;color:var(--accent)}
+.logo small{font-weight:600;letter-spacing:.5px;color:var(--mut)}
+header input{flex:1;min-width:120px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+header button{border:0;background:var(--accent);color:#fff;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer}
+header a{margin-left:auto;font-size:13px;color:var(--accent-d);text-decoration:none;font-weight:600}
+.status{font-size:12px;color:var(--mut)}
+main{display:grid;grid-template-columns:230px 1fr 340px;gap:14px;max-width:1200px;margin:0 auto;padding:16px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+.col{min-width:0}
+h3{margin:0 0 10px;font-size:15px}
+.card{background:var(--surf);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 14px}
+label{display:block;font-size:12px;font-weight:600;color:var(--mut);margin:10px 0 4px}
+input[type=text],textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:14px;font-family:inherit}
+textarea{min-height:90px;resize:vertical}
+.btn{border:0;background:var(--accent);color:#fff;border-radius:8px;padding:9px 16px;font-weight:700;cursor:pointer;margin-top:12px}
+.btn.sec{background:#eef2fe;color:var(--accent-d)}
+.btn.block{width:100%}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.alist{display:flex;flex-direction:column;gap:6px}
+.aitem{border:1px solid var(--line);border-radius:9px;padding:9px 11px;cursor:pointer;background:#fff;font-size:14px}
+.aitem:hover{border-color:var(--accent)}
+.aitem.on{border-color:var(--accent);background:#eef2fe}
+.aitem .id{display:block;font-size:11px;color:var(--mut);margin-top:2px}
+.skill{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin:6px 0;cursor:pointer}
+.skill.on{border-color:var(--accent);background:#eef2fe}
+.skill input{margin-top:3px}
+.skill .n{font-weight:600;font-size:13px}
+.skill .d{font-size:12px;color:var(--mut)}
+.hint{font-size:12px;color:var(--mut);margin:4px 0 0}
+.msg{margin:8px 0;padding:9px 11px;border-radius:10px;font-size:13px;white-space:pre-wrap}
+.msg.you{background:#eef2fe}.msg.bot{background:#fff;border:1px solid var(--line)}
+.tag{display:inline-block;font-size:11px;background:#eef2fe;color:var(--accent-d);border-radius:6px;padding:1px 7px;margin:2px 4px 0 0}
+.mut{color:var(--mut);font-size:12px}
+.prev-empty{color:var(--mut);font-size:13px;text-align:center;padding:20px 0}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">KARAG <small>Assistant Builder</small></span>
+  <input id="base" placeholder="API base (blank = same origin)"/>
+  <input id="token" placeholder="Bearer token / JWT"/>
+  <button onclick="saveAuth()">Connect</button>
+  <span id="status" class="status"></span>
+  <a href="/ui">Console →</a>
+</header>
+
+<main>
+  <!-- LEFT: assistant list -->
+  <div class="col">
+    <div class="card">
+      <h3>Assistants</h3>
+      <div id="alist" class="alist"><span class="mut">connect to load…</span></div>
+      <button class="btn sec block" onclick="newAssistant()">+ New assistant</button>
+    </div>
+  </div>
+
+  <!-- CENTER: editor -->
+  <div class="col">
+    <div class="card">
+      <h3 id="ed-title">New assistant</h3>
+      <label>Name</label>
+      <input id="f-name" type="text" placeholder="e.g. Helpdesk"/>
+      <label>Instruction (persona / how it should answer)</label>
+      <textarea id="f-inst" placeholder="Answer concisely, cite sources, and never guess a number."></textarea>
+      <label>Skills this assistant may use</label>
+      <p class="hint">Leave all unchecked to allow every skill the user is already permitted to use. Ticking some <b>narrows</b> access — it can never widen it.</p>
+      <div id="f-skills"><span class="mut">connect to list skills…</span></div>
+      <button id="save-btn" class="btn" onclick="saveAssistant()">Save assistant</button>
+      <button class="btn sec" onclick="newAssistant()" style="margin-left:8px">Reset form</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: live preview -->
+  <div class="col">
+    <div class="card">
+      <h3>Live preview</h3>
+      <div id="prev-note" class="mut" style="margin-bottom:8px">Save the assistant, then chat with it here.</div>
+      <div id="prev-log"><div class="prev-empty">No messages yet.</div></div>
+      <label>Ask your assistant</label>
+      <input id="prev-q" type="text" placeholder="Type a question…" onkeydown="if(event.key==='Enter')preview()"/>
+      <button id="prev-btn" class="btn block" onclick="preview()" disabled>Ask</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $=(id)=>document.getElementById(id);
+function base(){ return ($('base').value||'').replace(/\/$/,''); }
+function token(){ return $('token').value.trim(); }
+function setStatus(t,ok){ const s=$('status'); s.textContent=t; s.style.color=ok===false?'#d04545':'#64748b'; }
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+let editingId=null;      // null => creating; else updating this id
+let allSkills=[];        // [{name,description}]
+
+(function(){ $('base').value=localStorage.getItem('karag_base')||''; $('token').value=localStorage.getItem('karag_token')||''; })();
+function saveAuth(){ localStorage.setItem('karag_base',base()); localStorage.setItem('karag_token',token()); setStatus('connected'); refresh(); }
+
+async function api(path, opts={}){
+  const h=Object.assign({'Authorization':'Bearer '+token()}, opts.headers||{});
+  if(opts.json!==undefined){ h['Content-Type']='application/json'; opts.body=JSON.stringify(opts.json); delete opts.json; }
+  const r=await fetch(base()+path, Object.assign({},opts,{headers:h}));
+  const ct=r.headers.get('content-type')||'';
+  const data=ct.includes('application/json')?await r.json():await r.text();
+  if(!r.ok) throw new Error((data&&data.detail)||('HTTP '+r.status));
+  return data;
+}
+
+async function refresh(){ await loadSkills(); await loadList(); }
+
+async function loadSkills(){
+  try{ const d=await api('/v1/skills'); allSkills=d.skills||[]; renderSkills([]); }
+  catch(e){ $('f-skills').innerHTML='<span class="mut">('+esc(e.message)+')</span>'; }
+}
+function renderSkills(checked){
+  if(!allSkills.length){ $('f-skills').innerHTML='<span class="mut">(no skills available to you)</span>'; return; }
+  const set=new Set(checked||[]);
+  $('f-skills').innerHTML=allSkills.map(s=>{
+    const on=set.has(s.name);
+    return '<label class="skill'+(on?' on':'')+'"><input type="checkbox" value="'+esc(s.name)+'" '+(on?'checked':'')+' onchange="this.closest(\'.skill\').classList.toggle(\'on\',this.checked)"><span><span class="n">'+esc(s.name)+'</span><br><span class="d">'+esc(s.description||'')+'</span></span></label>';
+  }).join('');
+}
+function checkedSkills(){ return [...document.querySelectorAll('#f-skills input:checked')].map(b=>b.value); }
+
+async function loadList(){
+  try{
+    const d=await api('/v1/assistants'); const items=d.assistants||[];
+    $('alist').innerHTML=items.length?items.map(a=>
+      '<div class="aitem'+(a.id===editingId?' on':'')+'" onclick="edit(\''+a.id+'\')">'+esc(a.name)+'<span class="id">'+esc(a.id)+'</span></div>'
+    ).join(''):'<span class="mut">(none yet — create one)</span>';
+  }catch(e){ $('alist').innerHTML='<span class="mut">('+esc(e.message)+')</span>'; }
+}
+
+function newAssistant(){
+  editingId=null;
+  $('ed-title').textContent='New assistant';
+  $('f-name').value=''; $('f-inst').value=''; renderSkills([]);
+  $('save-btn').textContent='Save assistant';
+  disablePreview('Save the assistant, then chat with it here.');
+  loadList();
+}
+
+async function edit(id){
+  try{
+    const a=await api('/v1/assistants/'+id);
+    editingId=a.id;
+    $('ed-title').textContent='Editing: '+a.name;
+    $('f-name').value=a.name||''; $('f-inst').value=a.instruction||'';
+    renderSkills(a.allowed_skill_names||[]);
+    $('save-btn').textContent='Update assistant';
+    enablePreview();
+    loadList();
+  }catch(e){ setStatus(e.message,false); }
+}
+
+async function saveAssistant(){
+  const name=$('f-name').value.trim();
+  if(!name){ setStatus('name is required',false); return; }
+  const body={name, instruction:$('f-inst').value};
+  const skills=checkedSkills();
+  body.allowed_skill_names=skills.length?skills:null;
+  try{
+    let a;
+    if(editingId){ a=await api('/v1/assistants/'+editingId,{method:'PUT',json:body}); setStatus('updated'); }
+    else{ a=await api('/v1/assistants',{method:'POST',json:body}); setStatus('created'); }
+    editingId=a.id;
+    $('ed-title').textContent='Editing: '+a.name;
+    $('save-btn').textContent='Update assistant';
+    enablePreview();
+    loadList();
+  }catch(e){ setStatus(e.message,false); }
+}
+
+function disablePreview(note){ $('prev-btn').disabled=true; $('prev-note').textContent=note; $('prev-log').innerHTML='<div class="prev-empty">No messages yet.</div>'; }
+function enablePreview(){ $('prev-btn').disabled=false; $('prev-note').textContent='Chatting with this saved assistant.'; }
+
+function addMsg(role,html){
+  const log=$('prev-log'); if(log.querySelector('.prev-empty')) log.innerHTML='';
+  const d=document.createElement('div'); d.className='msg '+(role==='You'?'you':'bot');
+  d.innerHTML='<b>'+role+':</b> '+html; log.appendChild(d); d.scrollIntoView();
+}
+async function preview(){
+  if(!editingId) return;
+  const q=$('prev-q').value.trim(); if(!q) return; $('prev-q').value='';
+  addMsg('You', esc(q));
+  try{
+    const a=await api('/v1/assistants/'+editingId+'/ask',{method:'POST',json:{query:q}});
+    let html=esc(a.text||'(no answer)');
+    if(a.plane) html+=' <span class="tag">'+esc(a.plane)+'</span>';
+    (a.skills_used||[]).forEach(s=>html+='<span class="tag">skill: '+esc(s)+'</span>');
+    if(a.citations&&a.citations.length) html+='<div class="mut" style="margin-top:6px">Sources: '+a.citations.map(c=>esc(c.title)).join(', ')+'</div>';
+    if(a.queries_shown&&a.queries_shown.length) html+='<div class="mut" style="margin-top:4px">Query shown as provenance</div>';
+    addMsg('Assistant', html);
+  }catch(e){ addMsg('Error', esc(e.message)); }
+}
+
+if(token()) refresh();
+</script>
+</body>
+</html>

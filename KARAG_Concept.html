@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KARAG · Koinot Auto RAG</title>
+<style>
+:root{
+  --ink:#0f1b2d;--ink2:#27364a;--mut:#64748b;--line:#e7ebf1;--bg:#f5f7fa;
+  --surf:#ffffff;--accent:#3554d1;--accent-d:#27409e;--accent-soft:#eef2fe;
+  --teal:#0ca678;--teal-soft:#e6f7f1;--gold:#b07d18;--gold-soft:#fbf3e0;
+  --dang:#d04545;--dang-soft:#fcecec;--shadow:0 6px 26px rgba(16,40,80,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Segoe UI',system-ui,Roboto,Arial,sans-serif;color:var(--ink2);background:var(--bg);line-height:1.65;font-size:15.5px;-webkit-font-smoothing:antialiased}
+/* language toggle */
+body[data-lang="ru"] .en{display:none}
+body[data-lang="en"] .ru{display:none}
+/* top bar */
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+  padding:12px 28px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.topbar .logo{font-weight:800;font-size:20px;letter-spacing:1.5px;color:var(--accent);display:flex;align-items:center;gap:9px}
+.topbar .logo .dot{width:11px;height:11px;border-radius:3px;background:linear-gradient(135deg,var(--accent),var(--teal))}
+.topbar .logo small{font-weight:600;font-size:11px;letter-spacing:.5px;color:var(--mut)}
+.lang{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.lang button{border:0;background:var(--surf);padding:6px 14px;font-size:13px;font-weight:700;color:var(--mut);cursor:pointer;font-family:inherit}
+.lang button.on{background:var(--accent);color:#fff}
+.layout{display:grid;grid-template-columns:264px 1fr;max-width:1240px;margin:0 auto}
+nav{position:sticky;top:57px;align-self:start;height:calc(100vh - 57px);overflow-y:auto;padding:22px 12px 50px}
+nav a{display:block;padding:7px 12px;margin:1px 0;border-radius:9px;color:var(--ink2);text-decoration:none;font-size:13px;border-left:3px solid transparent;transition:.15s}
+nav a:hover{background:var(--accent-soft)}
+nav a.active{background:var(--accent-soft);border-left-color:var(--accent);color:var(--accent-d);font-weight:700}
+main{min-width:0}
+/* hero */
+.hero{position:relative;overflow:hidden;color:#fff;padding:64px 60px 56px;
+  background:linear-gradient(135deg,#0f2350 0%,#27409e 58%,#0ca678 130%)}
+.hero::after{content:"";position:absolute;right:-120px;top:-120px;width:380px;height:380px;border-radius:50%;
+  background:radial-gradient(circle,rgba(255,255,255,.13),transparent 70%)}
+.hero .eyebrow{font-size:12.5px;letter-spacing:4px;font-weight:700;opacity:.85}
+.hero h1{font-size:62px;line-height:1;margin:10px 0 8px;font-weight:800;letter-spacing:2px}
+.hero .full{font-size:19px;font-weight:600;opacity:.97}
+.hero .sub{margin-top:16px;font-size:16.5px;opacity:.9;max-width:660px;font-weight:400}
+.hero .meta{margin-top:20px;font-size:12.5px;opacity:.8;letter-spacing:.3px}
+.content{padding:34px 60px 90px;max-width:900px}
+/* exec card */
+.exec{background:var(--surf);border:1px solid var(--line);border-radius:16px;padding:26px 30px;margin:-44px 60px 6px;position:relative;z-index:2;box-shadow:var(--shadow)}
+.exec h2{border:0;padding:0;margin:0 0 12px;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent)}
+.exec p{margin:0 0 9px;font-size:15px}
+.exec .ask{background:var(--accent-soft);border-radius:11px;padding:13px 17px;margin-top:12px;font-size:15px}
+.exec .ask b{color:var(--accent-d)}
+/* sections */
+section{scroll-margin-top:72px}
+h2{display:flex;align-items:center;gap:12px;font-size:24px;color:var(--ink);margin:46px 0 16px;font-weight:800;letter-spacing:-.2px}
+h2 .nbadge{flex:none;width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent-d);
+  font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center}
+h3{font-size:16px;color:var(--accent-d);margin:24px 0 10px;font-weight:700}
+p{margin:0 0 13px}
+ul,ol{margin:0 0 14px 22px}li{margin:6px 0}
+code{background:#eef1f6;padding:1px 6px;border-radius:5px;font-size:13px;color:var(--accent-d)}
+table{border-collapse:separate;border-spacing:0;width:100%;margin:14px 0 20px;font-size:13.5px;
+  background:var(--surf);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+th{background:var(--ink);color:#fff;text-align:left;padding:11px 13px;font-size:12px;font-weight:600;letter-spacing:.3px}
+td{padding:10px 13px;border-top:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even),tr:nth-child(even) td{background:#fafbfd}
+/* cards */
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+.card{background:var(--surf);border:1px solid var(--line);border-radius:13px;padding:16px 18px;font-size:14px;box-shadow:var(--shadow)}
+.card .ic{width:36px;height:36px;border-radius:10px;background:var(--teal-soft);display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:9px}
+.card b{color:var(--ink);display:block;margin-bottom:3px}
+/* note boxes */
+.box{border-radius:12px;padding:14px 17px;margin:16px 0;font-size:14.5px;border:1px solid var(--line)}
+.box.good{background:var(--teal-soft);border-color:#bfe8d9}.box.good b{color:#0a7a59}
+.box.warn{background:var(--gold-soft);border-color:#eccf93}.box.warn b{color:var(--gold)}
+.box.dang{background:var(--dang-soft);border-color:#f0c4c4}.box.dang b{color:var(--dang)}
+/* qa */
+.qa{background:var(--surf);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:11px;padding:14px 18px;margin:11px 0;box-shadow:var(--shadow)}
+.qa .q{font-weight:700;color:var(--ink);margin-bottom:5px}
+.qa .a{font-size:14.5px;color:var(--ink2)}
+/* phases */
+.phase{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0}
+.phase .b{background:var(--surf);border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:12px;padding:15px 17px;font-size:13.5px;box-shadow:var(--shadow)}
+.phase .b h4{font-size:14px;color:var(--accent-d);margin-bottom:6px}
+.diagram{background:var(--surf);border:1px solid var(--line);border-radius:14px;padding:20px;margin:16px 0;overflow-x:auto;box-shadow:var(--shadow)}
+.top{display:inline-block;margin-top:10px;font-size:12px;color:var(--mut);text-decoration:none}
+.top:hover{color:var(--accent)}
+@media(max-width:880px){
+  .layout{grid-template-columns:1fr}
+  nav{position:static;height:auto;padding:8px 14px;border-bottom:1px solid var(--line);white-space:nowrap;overflow-x:auto}
+  nav a{display:inline-block;border-left:0}
+  .hero{padding:40px 22px 34px}.hero h1{font-size:44px}
+  .exec{margin:-34px 16px 6px;padding:18px}
+  .content{padding:22px 18px 60px}
+  .cards,.phase{grid-template-columns:1fr}
+  .topbar{padding:10px 16px}
+}
+</style>
+</head>
+<body data-lang="ru">
+
+<div class="topbar">
+  <div class="logo"><span class="dot"></span>KARAG <small class="ru">Koinot Auto RAG</small><small class="en">Koinot Auto RAG</small></div>
+  <div class="lang">
+    <button data-l="ru" class="on">RU</button>
+    <button data-l="en">EN</button>
+  </div>
+</div>
+
+<div class="layout">
+<nav>
+  <a href="#s0"><span class="ru">Резюме</span><span class="en">Summary</span></a>
+  <a href="#s1"><span class="ru">1. Что это</span><span class="en">1. What it is</span></a>
+  <a href="#s2"><span class="ru">2. Конкуренты</span><span class="en">2. Competitors</span></a>
+  <a href="#s3"><span class="ru">3. Что даёт группе</span><span class="en">3. Value to the group</span></a>
+  <a href="#s4"><span class="ru">4. Знания и данные</span><span class="en">4. Knowledge & data</span></a>
+  <a href="#s5"><span class="ru">5. «Навыки»</span><span class="en">5. "Skills"</span></a>
+  <a href="#s6"><span class="ru">6. Подключение данных</span><span class="en">6. Data connection</span></a>
+  <a href="#s7"><span class="ru">7. Доступ (RBAC)</span><span class="en">7. Access (RBAC)</span></a>
+  <a href="#s8"><span class="ru">8. Office-файлы</span><span class="en">8. Office files</span></a>
+  <a href="#s9"><span class="ru">9. Размещение и LLM</span><span class="en">9. Hosting & LLM</span></a>
+  <a href="#s10"><span class="ru">10. Сервер</span><span class="en">10. Server</span></a>
+  <a href="#s11"><span class="ru">11. Архитектура</span><span class="en">11. Architecture</span></a>
+  <a href="#s12"><span class="ru">12. Стек</span><span class="en">12. Tech stack</span></a>
+  <a href="#s13"><span class="ru">13. Риски</span><span class="en">13. Risks</span></a>
+  <a href="#s14"><span class="ru">14. План внедрения</span><span class="en">14. Rollout plan</span></a>
+  <a href="#s15"><span class="ru">15. Развитие</span><span class="en">15. Roadmap ideas</span></a>
+  <a href="#s16"><span class="ru">16. Вопросы</span><span class="en">16. Q&amp;A</span></a>
+  <a href="#s17"><span class="ru">17. Модель продаж</span><span class="en">17. Business model</span></a>
+</nav>
+
+<main>
+  <div class="hero">
+    <div class="eyebrow">KOINOTI AI · KIT</div>
+    <h1>KARAG</h1>
+    <div class="full"><span class="ru">Koinot Auto RAG — платформа корпоративного ИИ как сервис</span><span class="en">Koinot Auto RAG — enterprise AI platform as a service</span></div>
+    <div class="sub"><span class="ru">Каждая компания группы — свой ИИ на своих данных: знания, живые цифры и готовые документы. Без программирования, с данными внутри периметра.</span><span class="en">Every company in the group gets its own AI on its own data: knowledge, live numbers and ready-made documents. No coding, data stays inside the perimeter.</span></div>
+    <div class="meta"><span class="ru">Подготовлено: ИТ-направление (KIT) · Июнь 2026 · Для высшего руководства Koinoti</span><span class="en">Prepared by: IT division (KIT) · June 2026 · For Koinoti senior management</span></div>
+  </div>
+
+  <div class="exec" id="s0">
+    <h2><span class="ru">Резюме для защиты</span><span class="en">Executive summary</span></h2>
+    <p class="ru"><strong>Что:</strong> KARAG — единая платформа, на которой у каждой компании группы есть собственный ИИ, обученный на её документах и подключённый к её данным. Сотрудники без ИТ-навыков создают ассистентов, руководители получают ответы на основе реальных цифр и готовые отчёты.</p>
+    <p class="en"><strong>What:</strong> KARAG is a single platform where every company in the group has its own AI, trained on its documents and connected to its data. Non-technical staff create assistants; managers get answers based on real numbers and ready-made reports.</p>
+    <p class="ru"><strong>Почему мы, а не зарубежный сервис:</strong> данные остаются в стране и в нашем периметре, русский и таджикский язык, контур GigaChat, локальная цена и поддержка. Глобальные игроки (Glean, Microsoft) этого здесь не дают.</p>
+    <p class="en"><strong>Why us, not a foreign service:</strong> data stays in-country and in our perimeter, Russian and Tajik language, GigaChat contour, local pricing and support. Global players (Glean, Microsoft) don't offer this here.</p>
+    <p class="ru"><strong>Почему сейчас:</strong> импульс ПМЭФ-2026, рынок растёт ~38% в год, конкурентов на нашем рынке нет — окно возможностей и новый источник дохода для KIT.</p>
+    <p class="en"><strong>Why now:</strong> the SPIEF-2026 momentum, a market growing ~38%/year, and no competitors in our market — a window of opportunity and a new revenue stream for KIT.</p>
+    <div class="ask"><span class="ru"><b>О чём просим:</b> одобрить пилот на трёх компаниях группы (Koinoti → Evar → Dusti Pharma) на текущем оборудовании KIT, с понятными критериями успеха и решением «масштабировать / доработать / остановить» по итогам.</span><span class="en"><b>The ask:</b> approve a pilot on three group companies (Koinoti → Evar → Dusti Pharma) on KIT's existing hardware, with clear success criteria and a "scale / improve / stop" decision at the end.</span></div>
+  </div>
+
+  <div class="content">
+
+  <section id="s1">
+  <h2><span class="nbadge">1</span><span class="ru">Что это и для кого</span><span class="en">What it is and who it's for</span></h2>
+  <div class="ru">
+    <p><strong>Идея.</strong> Платформа, на которой у каждой компании есть собственный ИИ, обученный на её данных. Сотрудники добавляют информацию, ИИ отвечает в командных чатах, нетехнические пользователи создают своих ассистентов без программирования. Технические специалисты подключают базы данных, чтобы ИИ отвечал руководителям на основе <em>реальных</em> цифр.</p>
+    <p><strong>Это не демо, а продукт.</strong> Сервис, который KIT предоставляет внутри группы Koinoti и продаёт внешним заказчикам — многоарендный, безопасный и сопровождаемый.</p>
+    <p><strong>Роль KIT.</strong> Внутренний центр ИИ-компетенции и оператор платформы: разворачивает, сопровождает, развивает и помогает компаниям с настройкой данных.</p>
+  </div>
+  <div class="en">
+    <p><strong>The idea.</strong> A platform where every company has its own AI trained on its data. Staff add information, the AI answers in team chats, non-technical users create their own assistants without coding. Technical staff connect databases so the AI answers managers based on <em>real</em> numbers.</p>
+    <p><strong>This is a product, not a demo.</strong> A service KIT provides inside the Koinoti group and sells to external customers — multi-tenant, secure and supported.</p>
+    <p><strong>KIT's role.</strong> Internal AI competence centre and platform operator: it deploys, maintains, evolves the platform and helps companies set up their data.</p>
+  </div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s2">
+  <h2><span class="nbadge">2</span><span class="ru">Конкуренты и наше отличие</span><span class="en">Competitors and our edge</span></h2>
+  <p class="ru">Рынок большой и растущий: ~$1.94 млрд в 2025 г. → ~$9.86 млрд к 2030 г. (CAGR ~38%). Игроки делятся на три лагеря — и ни один не закрывает наш рынок.</p>
+  <p class="en">The market is large and growing: ~$1.94B in 2025 → ~$9.86B by 2030 (CAGR ~38%). Players fall into three camps — and none serve our market.</p>
+  <table>
+    <tr><th><span class="ru">Категория</span><span class="en">Category</span></th><th><span class="ru">Примеры</span><span class="en">Examples</span></th><th><span class="ru">Чем сильны</span><span class="en">Strengths</span></th><th><span class="ru">Почему не для нас</span><span class="en">Why not for us</span></th></tr>
+    <tr><td><span class="ru">Ассистенты знаний</span><span class="en">Knowledge assistants</span></td><td>Glean, Dust, Microsoft Copilot, Writer</td><td><span class="ru">Поиск, агенты, интеграции</span><span class="en">Search, agents, integrations</span></td><td><span class="ru">Иностранное облако, англоязычные, дорого, не ставятся в наш ДЦ</span><span class="en">Foreign cloud, English-first, costly, won't deploy in our DC</span></td></tr>
+    <tr><td><span class="ru">Управляемый RAG</span><span class="en">Managed RAG</span></td><td>Vectara, AWS Bedrock, Cloudflare AutoRAG</td><td><span class="ru">RAG-инфраструктура для разработчиков</span><span class="en">RAG infra for developers</span></td><td><span class="ru">Не продукт для нетех. пользователей; зарубежное облако</span><span class="en">Not a product for non-tech users; foreign cloud</span></td></tr>
+    <tr><td><span class="ru">Разговор с БД</span><span class="en">Talk to your DB</span></td><td>BlazeSQL, Snowflake Cortex, OvalEdge</td><td><span class="ru">Аналитика на естественном языке</span><span class="en">Natural-language analytics</span></td><td><span class="ru">Точечные; не объединяют знания + данные + no-code + локальный хостинг</span><span class="en">Point tools; don't combine knowledge + data + no-code + local hosting</span></td></tr>
+  </table>
+  <div class="box good"><b><span class="ru">Наш «ров»:</span><span class="en">Our moat:</span></b> <span class="ru">локальное размещение в ДЦ KIT, данные не покидают страну, русский и таджикский язык, контур GigaChat, личный онбординг, локальная цена — и в одном продукте знания, живые данные, конструктор без кода и генерация Office. Мы выигрываем не как «лучший Glean», а как единственный, кто <em>здесь</em>.</span><span class="en">local hosting in KIT's DC, data never leaves the country, Russian and Tajik language, GigaChat contour, hands-on onboarding, local price — and one product combining knowledge, live data, a no-code builder and Office generation. We win not as a "better Glean", but as the only one that is <em>here</em>.</span></div>
+  <div class="box warn"><b><span class="ru">Урок рынка (в нашу пользу).</span><span class="en">Market lesson (in our favour).</span></b> <span class="ru">«Сырое» подключение LLM→БД проваливается катастрофически, а управляемый семантический слой даёт 90%+ точности. Подход KARAG «навыки + views» — на правильной стороне.</span><span class="en">Raw LLM→DB connections fail catastrophically, while a governed semantic layer reaches 90%+ accuracy. KARAG's "skills + views" approach is on the right side of this.</span></div>
+  <div class="box warn"><b><span class="ru">Имя.</span><span class="en">Name.</span></b> <span class="ru">«AutoRAG» — продукт Cloudflare, поэтому продукт назван <strong>KARAG</strong> (Koinot Auto RAG) — собственный бренд.</span><span class="en">"AutoRAG" is a Cloudflare product, so this product is named <strong>KARAG</strong> (Koinot Auto RAG) — our own brand.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s3">
+  <h2><span class="nbadge">3</span><span class="ru">Что KARAG даёт Koinoti и дочерним компаниям</span><span class="en">What KARAG gives Koinoti and its daughter companies</span></h2>
+  <p class="ru">Ценность работает на двух уровнях: для управляющей компании (группа в целом) и для каждой дочерней компании в её процессах.</p>
+  <p class="en">Value works on two levels: for the holding (the group as a whole) and for each daughter company in its own processes.</p>
+
+  <h3><span class="ru">Для Koinoti (управляющая компания)</span><span class="en">For Koinoti (the holding)</span></h3>
+  <div class="cards">
+    <div class="card"><div class="ic">🏛️</div><b><span class="ru">Единый ИИ-актив на всю группу</span><span class="en">One AI asset for the whole group</span></b><span class="ru">Один стандарт и одна модель безопасности вместо «каждый строит своё».</span><span class="en">One standard and one security model instead of "everyone builds their own".</span></div>
+    <div class="card"><div class="ic">🔒</div><b><span class="ru">Данные и компетенция внутри</span><span class="en">Data and expertise stay in-house</span></b><span class="ru">Знания, навыки и контроль у KIT, а не у внешнего вендора.</span><span class="en">Knowledge, skills and control stay with KIT, not an outside vendor.</span></div>
+    <div class="card"><div class="ic">🗺️</div><b><span class="ru">Суверенитет данных</span><span class="en">Data sovereignty</span></b><span class="ru">Данные не покидают страну и периметр KIT — контроль и комплаенс.</span><span class="en">Data never leaves the country or KIT's perimeter — control and compliance.</span></div>
+    <div class="card"><div class="ic">📊</div><b><span class="ru">Решения на фактах</span><span class="en">Fact-based decisions</span></b><span class="ru">Реальные цифры и сводки быстрее, меньше ручного сбора отчётов.</span><span class="en">Real numbers and summaries faster, less manual report-gathering.</span></div>
+    <div class="card"><div class="ic">💰</div><b><span class="ru">Новый источник дохода</span><span class="en">New revenue stream</span></b><span class="ru">KIT продаёт сервис вовне: онбординг + подписка + потребление.</span><span class="en">KIT sells the service externally: onboarding + subscription + usage.</span></div>
+    <div class="card"><div class="ic">🚀</div><b><span class="ru">Рост ИИ-зрелости группы</span><span class="en">Group-wide AI maturity</span></b><span class="ru">Сотрудники учатся применять ИИ; KIT — центр компетенции.</span><span class="en">Staff learn to use AI safely; KIT becomes the competence centre.</span></div>
+  </div>
+
+  <h3><span class="ru">Для дочерних компаний (по направлениям)</span><span class="en">For daughter companies (by sector)</span></h3>
+  <table>
+    <tr><th><span class="ru">Компания / сфера</span><span class="en">Company / sector</span></th><th><span class="ru">Что даёт KARAG</span><span class="en">What KARAG gives</span></th><th><span class="ru">Эффект</span><span class="en">Effect</span></th></tr>
+    <tr><td><span class="ru">Ёвар, Дастрас (ритейл)</span><span class="en">Yovar, Dastras (retail)</span></td><td><span class="ru">Прогноз спроса, рекомендации заказа, аномалии; поиск по регламентам</span><span class="en">Demand forecast, order recommendations, anomalies; policy search</span></td><td><span class="ru">Меньше дефицита и излишков</span><span class="en">Less stockout and overstock</span></td></tr>
+    <tr><td><span class="ru">Аптечная сеть</span><span class="en">Pharmacy chain</span></td><td><span class="ru">Контроль сроков годности и остатков, перемещения, дашборд рисков</span><span class="en">Expiry & stock control, transfers, risk dashboard</span></td><td><span class="ru">Снижение списаний и дефицита</span><span class="en">Lower write-offs and shortages</span></td></tr>
+    <tr><td>Dusti Pharma</td><td><span class="ru">Поиск по SOP, анализ отклонений (поддержка решений), черновик CAPA</span><span class="en">SOP search, deviation analysis (decision-support), CAPA drafts</span></td><td><span class="ru">Быстрее расследования — под контролем QA</span><span class="en">Faster investigations — under QA control</span></td></tr>
+    <tr><td><span class="ru">Авто (BYD, JAC, Chery, TajMotors)</span><span class="en">Auto (BYD, JAC, Chery, TajMotors)</span></td><td><span class="ru">ИИ-консультант продавца, scoring лидов, резюме звонков</span><span class="en">AI sales assistant, lead scoring, call summaries</span></td><td><span class="ru">Выше конверсия и скорость ответа</span><span class="en">Higher conversion and response speed</span></td></tr>
+    <tr><td><span class="ru">Образование (AtS, MDIS)</span><span class="en">Education (AtS, MDIS)</span></td><td><span class="ru">Учебный ассистент, FAQ, помощь по материалам</span><span class="en">Learning assistant, FAQ, course-material help</span></td><td><span class="ru">Меньше нагрузка на преподавателей</span><span class="en">Less load on teachers</span></td></tr>
+    <tr><td>IT (KIT)</td><td><span class="ru">Классификация заявок, база знаний, помощник разработчика</span><span class="en">Ticket triage, knowledge base, dev assistant</span></td><td><span class="ru">Снижение времени решения и SLA</span><span class="en">Lower resolution time and SLA</span></td></tr>
+    <tr><td><span class="ru">HR, финансы, юристы, закупки</span><span class="en">HR, finance, legal, procurement</span></td><td><span class="ru">Поиск по политикам, черновики, сравнение договоров</span><span class="en">Policy search, drafts, contract comparison</span></td><td><span class="ru">Экономия времени на рутине</span><span class="en">Time saved on routine work</span></td></tr>
+    <tr><td><span class="ru">Все сотрудники</span><span class="en">All employees</span></td><td><span class="ru">Личный ИИ-ассистент и создание ассистентов без кода</span><span class="en">Personal AI assistant and no-code assistant creation</span></td><td><span class="ru">Рост продуктивности и ИИ-грамотности</span><span class="en">Higher productivity and AI literacy</span></td></tr>
+  </table>
+  <div class="box good"><b><span class="ru">Главная мысль для защиты.</span><span class="en">The key message for the defense.</span></b> <span class="ru">KARAG — это не «ещё один чат-бот», а общая инфраструктура: построив платформу один раз, группа получает повторяемый эффект во всех компаниях и новый внешний доход.</span><span class="en">KARAG is not "another chatbot" — it's shared infrastructure: build the platform once, and the group gets repeatable value across every company plus a new external revenue line.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s4">
+  <h2><span class="nbadge">4</span><span class="ru">Два плана: знания и данные</span><span class="en">Two planes: knowledge and data</span></h2>
+  <p class="ru">В системе сознательно разделены два механизма. Их смешение — главная причина, по которой подобные продукты «уверенно врут».</p>
+  <p class="en">The system deliberately separates two mechanisms. Blurring them is the main reason such products "confidently lie".</p>
+  <table>
+    <tr><th><span class="ru">План</span><span class="en">Plane</span></th><th><span class="ru">С чем работает</span><span class="en">Works with</span></th><th><span class="ru">Пример вопроса</span><span class="en">Example question</span></th><th><span class="ru">Механизм</span><span class="en">Mechanism</span></th></tr>
+    <tr><td><b><span class="ru">Знания</span><span class="en">Knowledge</span></b></td><td><span class="ru">Текст: регламенты, SOP, договоры</span><span class="en">Text: policies, SOPs, contracts</span></td><td><span class="ru">«Что говорит политика о возвратах?»</span><span class="en">"What does the returns policy say?"</span></td><td><span class="ru">RAG — поиск фрагмента, ответ со ссылкой</span><span class="en">RAG — retrieve passage, answer with source</span></td></tr>
+    <tr><td><b><span class="ru">Данные</span><span class="en">Data</span></b></td><td><span class="ru">Структурированные: 1Ф, ERP, БД</span><span class="en">Structured: 1F, ERP, databases</span></td><td><span class="ru">«Сколько продали вчера?»</span><span class="en">"How much did we sell yesterday?"</span></td><td><span class="ru">Запрос через «навык» (view или API)</span><span class="en">Query via a "skill" (view or API)</span></td></tr>
+  </table>
+  <div class="box dang"><b><span class="ru">Ключевое правило.</span><span class="en">Key rule.</span></b> <span class="ru">RAG извлекает текст — он <u>не</u> считает суммы. На вопрос «продажи вчера» документный RAG выдаст правдоподобное, но неверное число. План данных строится отдельно — на проверенных запросах.</span><span class="en">RAG retrieves text — it does <u>not</u> compute totals. Ask document-RAG "yesterday's sales" and it returns a plausible but wrong number. The data plane is built separately, on verified queries.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s5">
+  <h2><span class="nbadge">5</span><span class="ru">«Навыки» — ядро продукта</span><span class="en">"Skills" — the core of the product</span></h2>
+  <p class="ru">Центральная абстракция — <strong>навык</strong> (по аналогии со «skills» у Claude): подготовленный, параметризованный запрос или отчёт, который технический специалист создаёт и тестирует один раз, после чего им пользуются все. Навык гарантирует корректность, потому что запрос написал и проверил человек.</p>
+  <p class="en">The central abstraction is the <strong>skill</strong> (like Claude's "skills"): a prepared, parameterised query or report that a technical specialist builds and tests once, after which everyone uses it. A skill guarantees correctness because a human wrote and tested the query.</p>
+  <ul class="ru">
+    <li>Большинство вопросов руководителей решаются навыком, а не импровизированным SQL.</li>
+    <li>Навык — универсальный «переходник»: внутри это либо SQL к view, либо вызов API. ИИ видит каталог безопасных навыков, а не «сырую» БД.</li>
+    <li>Свободные вопросы разрешены, но в рамках и всегда с показом выполненного запроса.</li>
+  </ul>
+  <ul class="en">
+    <li>Most manager questions resolve to a skill, not improvised SQL.</li>
+    <li>A skill is a universal adapter: inside it's either SQL on a view or an API call. The AI sees a catalogue of safe skills, never the raw database.</li>
+    <li>Free-form questions are allowed, but within bounds and always showing the executed query.</li>
+  </ul>
+  <div class="box good"><b><span class="ru">Почему сильно.</span><span class="en">Why it's powerful.</span></b> <span class="ru">Навык решает сразу точность (проверено), безопасность (нет произвольного доступа к БД) и самообслуживание (навыки переиспользуются).</span><span class="en">A skill solves accuracy (verified), security (no arbitrary DB access) and self-service (skills are reused) all at once.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s6">
+  <h2><span class="nbadge">6</span><span class="ru">Подключение данных</span><span class="en">Connecting data</span></h2>
+  <p class="ru">Подключение всегда <strong>только на чтение</strong>. Два способа, оба заворачиваются в навыки:</p>
+  <p class="en">Connection is always <strong>read-only</strong>. Two methods, both wrapped as skills:</p>
+  <table>
+    <tr><th><span class="ru">Способ</span><span class="en">Method</span></th><th><span class="ru">Как работает</span><span class="en">How it works</span></th><th><span class="ru">Когда выбирать</span><span class="en">When to choose</span></th></tr>
+    <tr><td><b>Views</b></td><td><span class="ru">С компанией определяем безопасные представления и семантический слой; дальше она ведёт сама.</span><span class="en">We define safe views and a semantic layer with the company; then they maintain it.</span></td><td><span class="ru">Когда готовы дать доступ к БД на чтение</span><span class="en">When they'll grant read access to the DB</span></td></tr>
+    <tr><td>API</td><td><span class="ru">Компания отдаёт ограниченные эндпоинты с готовыми бизнес-объектами. Платформа не касается БД.</span><span class="en">The company exposes limited endpoints with ready business objects. The platform never touches the DB.</span></td><td><span class="ru">Когда нужна максимальная изоляция</span><span class="en">When maximum isolation is needed</span></td></tr>
+  </table>
+  <div class="box good"><b><span class="ru">API — не слабее, а сильнее:</span><span class="en">API is stronger, not weaker:</span></b> <span class="ru">службе безопасности проще согласовать вызов своего read-only API; корректность остаётся в коде компании; обходятся «запутанные» схемы (1С на MySQL).</span><span class="en">security teams approve "call our read-only API" more readily; correctness stays in the company's code; it sidesteps messy schemas (1C on MySQL).</span></div>
+  <h3><span class="ru">Защита свободных запросов</span><span class="en">Guardrails for free-form queries</span></h3>
+  <ul class="ru"><li>Только против реплики на чтение и в пределах семантического слоя.</li><li>ИИ показывает запрос и происхождение цифр — ответ проверяем.</li><li>Ограниченные права, тайм-ауты, лимиты строк.</li><li>Подача — «поддержка решений, проверьте перед действием».</li></ul>
+  <ul class="en"><li>Only against a read replica and within the semantic layer.</li><li>The AI shows the query and data provenance — answers are verifiable.</li><li>Scoped credentials, timeouts, row limits.</li><li>Framed as "decision support, verify before acting".</li></ul>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s7">
+  <h2><span class="nbadge">7</span><span class="ru">Модель доступа (RBAC)</span><span class="en">Access model (RBAC)</span></h2>
+  <p class="ru">Требование «CEO видит всё, но HR <u>никогда</u> не видит финансы» — самое строгое в продукте. Слово «никогда» требует доступа с учётом прав <strong>на этапе поиска</strong>, а не просто ролей при входе.</p>
+  <p class="en">"The CEO sees everything, but HR <u>never</u> sees financials" is the strictest requirement in the product. "Never" demands permission-aware access <strong>at retrieval time</strong>, not just login roles.</p>
+  <h3><span class="ru">Модель: матрица «роли × классы данных», по умолчанию запрет</span><span class="en">Model: a roles × data-classes matrix, default-deny</span></h3>
+  <ol class="ru">
+    <li>Каждый документ и источник классифицируется при загрузке: <code>public / operational / HR / financial / regulated</code>. Без класса — ограничен (fail-closed).</li>
+    <li>Роли сопоставлены с классами. HR → {HR, operational, public}, <u>без</u> {financial}.</li>
+    <li>Контроль в двух местах: при поиске (финансовый документ невидим для HR) и на уровне навыка.</li>
+    <li>CEO = суперпользователь только своего арендатора, но не данных других компаний.</li>
+    <li>Классификация: админ — на источник; загрузчик — на документ; авто-классификация — лишь подсказка.</li>
+  </ol>
+  <ol class="en">
+    <li>Every document and source is classified at upload: <code>public / operational / HR / financial / regulated</code>. Unclassified = restricted (fail-closed).</li>
+    <li>Roles map to classes. HR → {HR, operational, public}, <u>without</u> {financial}.</li>
+    <li>Enforced in two places: at retrieval (a financial doc is invisible to HR) and at the skill level.</li>
+    <li>The CEO is a superuser of their own tenant only, never other companies' data.</li>
+    <li>Classification: admin per source; uploader per document; auto-classification only as a suggestion.</li>
+  </ol>
+  <div class="box dang"><b><span class="ru">Ловушка.</span><span class="en">The trap.</span></b> <span class="ru">Нельзя фильтровать ответ после поиска («модель видела, но ей сказали не говорить») — это утечка. Запрещённый контент не должен попадать в контекст вообще.</span><span class="en">You can't filter the answer after retrieval ("the model saw it but was told not to tell") — that leaks. Forbidden content must never enter the context at all.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s8">
+  <h2><span class="nbadge">8</span><span class="ru">Работа с Office-файлами</span><span class="en">Working with Office files</span></h2>
+  <table>
+    <tr><th><span class="ru">Возможность</span><span class="en">Capability</span></th><th><span class="ru">Что это</span><span class="en">What it is</span></th><th><span class="ru">Фаза</span><span class="en">Phase</span></th></tr>
+    <tr><td><b><span class="ru">Чтение</span><span class="en">Reading</span></b></td><td><span class="ru">Импорт .docx / .xlsx / .pptx в план знаний</span><span class="en">Import .docx / .xlsx / .pptx into the knowledge plane</span></td><td><span class="ru">Фаза 1</span><span class="en">Phase 1</span></td></tr>
+    <tr><td><b><span class="ru">Генерация</span><span class="en">Generation</span></b></td><td><span class="ru">Навык-вывод: готовый отформатированный отчёт .xlsx / .docx / .pptx</span><span class="en">Output skill: a ready, formatted .xlsx / .docx / .pptx report</span></td><td><span class="ru">Фаза 1.5</span><span class="en">Phase 1.5</span></td></tr>
+  </table>
+  <div class="box good"><b><span class="ru">Почему сильно.</span><span class="en">Why it's powerful.</span></b> <span class="ru">Руководитель получает не просто ответ, а готовый деловой документ — заметная «вау»-функция и апселл.</span><span class="en">A manager gets not just an answer but a ready business document — a visible "wow" feature and an upsell.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s9">
+  <h2><span class="nbadge">9</span><span class="ru">Размещение и LLM</span><span class="en">Hosting and the LLM</span></h2>
+  <p class="ru"><strong>Размещение:</strong> в собственном дата-центре KIT. Данные компании поступают в ДЦ KIT; для генерации ответа результат отправляется в LLM. Модель — <strong>сменная</strong>, по фазам:</p>
+  <p class="en"><strong>Hosting:</strong> in KIT's own data centre. Company data comes to KIT's DC; to generate an answer, the result is sent to the LLM. The model is <strong>swappable</strong>, in phases:</p>
+  <div class="phase">
+    <div class="b"><h4><span class="ru">Фаза 1 — LLM через API</span><span class="en">Phase 1 — LLM via API</span></h4><span class="ru">GigaChat для чувствительного контура (рос. серверы), OpenAI — для нечувствительного. Работает на текущем оборудовании KIT без GPU.</span><span class="en">GigaChat for the sensitive contour (Russian servers), OpenAI for non-sensitive. Runs on KIT's current hardware without a GPU.</span></div>
+    <div class="b"><h4><span class="ru">Фаза 2 — свои GPU</span><span class="en">Phase 2 — own GPUs</span></h4><span class="ru">GPU-узел для полностью локального вывода — когда у компании требование «никаких внешних сервисов» или счёт за API превысит стоимость GPU.</span><span class="en">A GPU node for fully local inference — when a company requires "no external services" or the API bill exceeds the cost of a GPU.</span></div>
+  </div>
+  <div class="box warn"><b><span class="ru">Честная граница.</span><span class="en">An honest boundary.</span></b> <span class="ru">Без GPU полностью локального вывода нет: для каждого ответа результат уходит во внешний API. Самых строгих заказчиков обслуживаем после установки GPU (Фаза 2). Для большинства ранних случаев GigaChat приемлем.</span><span class="en">Without a GPU there is no fully local inference: for every answer the result goes to an external API. The strictest customers are served only after a GPU (Phase 2). For most early cases GigaChat is acceptable.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s10">
+  <h2><span class="nbadge">10</span><span class="ru">Требования к серверу</span><span class="en">Server requirements</span></h2>
+  <p class="ru">Текущее оборудование KIT (CPU + большой RAM, без GPU) полностью подходит для Фазы 1 — оно запускает всё, кроме LLM, которая вызывается по API.</p>
+  <p class="en">KIT's current hardware (CPU + lots of RAM, no GPU) fully fits Phase 1 — it runs everything except the LLM, which is called via API.</p>
+  <table>
+    <tr><th><span class="ru">Компонент</span><span class="en">Component</span></th><th><span class="ru">Фаза 1 (по API) — сейчас</span><span class="en">Phase 1 (via API) — now</span></th><th><span class="ru">Фаза 2 (локально) — позже</span><span class="en">Phase 2 (local) — later</span></th></tr>
+    <tr><td>GPU</td><td><span class="ru">Не нужен</span><span class="en">Not needed</span></td><td><span class="ru">1× 48 ГБ (L40S/A6000); 2–4× 80 ГБ для 70B</span><span class="en">1× 48 GB (L40S/A6000); 2–4× 80 GB for 70B</span></td></tr>
+    <tr><td>CPU</td><td>≈30</td><td>32+</td></tr>
+    <tr><td>RAM</td><td>≈128 GB</td><td>128–256 GB</td></tr>
+    <tr><td><span class="ru">Диск</span><span class="en">Disk</span></td><td>2–4 TB NVMe (RAID)</td><td>4–8 TB NVMe (RAID)</td></tr>
+    <tr><td><span class="ru">Стоимость</span><span class="en">Cost</span></td><td><span class="ru">Уже есть у KIT</span><span class="en">KIT already has it</span></td><td><span class="ru">~$25k и выше</span><span class="en">~$25k and up</span></td></tr>
+  </table>
+  <div class="box warn"><b><span class="ru">Надёжность.</span><span class="en">Reliability.</span></b> <span class="ru">До платящих заказчиков: второй узел (резерв), бэкапы, ИБП, охлаждение, сетевая сегментация, мониторинг.</span><span class="en">Before paying customers: a second node (redundancy), backups, UPS, cooling, network segmentation, monitoring.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s11">
+  <h2><span class="nbadge">11</span><span class="ru">Архитектура</span><span class="en">Architecture</span></h2>
+  <div class="diagram">
+  <svg viewBox="0 0 900 470" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,Arial,sans-serif">
+    <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#64748b"/></marker></defs>
+    <rect x="20" y="40" width="190" height="180" rx="12" fill="#f1f5fb" stroke="#d4ddea"/>
+    <text x="115" y="64" text-anchor="middle" font-size="13" font-weight="700" fill="#0f1b2d">Company · Компания</text>
+    <rect x="40" y="80" width="150" height="38" rx="8" fill="#fff" stroke="#d4ddea"/><text x="115" y="104" text-anchor="middle" font-size="11.5" fill="#0f1b2d">DB view (read-only)</text>
+    <rect x="40" y="128" width="150" height="38" rx="8" fill="#fff" stroke="#d4ddea"/><text x="115" y="152" text-anchor="middle" font-size="11.5" fill="#0f1b2d">API (limited)</text>
+    <rect x="40" y="176" width="150" height="34" rx="8" fill="#fff" stroke="#d4ddea"/><text x="115" y="198" text-anchor="middle" font-size="11.5" fill="#0f1b2d">Docs · Документы</text>
+    <rect x="270" y="20" width="420" height="430" rx="14" fill="#eef2fe" stroke="#3554d1" stroke-width="1.5"/>
+    <text x="480" y="44" text-anchor="middle" font-size="13" font-weight="800" fill="#27409e">KIT Data Centre · KARAG</text>
+    <rect x="290" y="58" width="180" height="46" rx="9" fill="#fff" stroke="#3554d1"/><text x="380" y="78" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f1b2d">Connectors → Skills</text><text x="380" y="94" text-anchor="middle" font-size="10" fill="#64748b">verified, read-only</text>
+    <rect x="490" y="58" width="180" height="46" rx="9" fill="#fff" stroke="#0ca678"/><text x="580" y="78" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f1b2d">Knowledge (RAG)</text><text x="580" y="94" text-anchor="middle" font-size="10" fill="#64748b">vector DB, sources</text>
+    <rect x="290" y="124" width="380" height="42" rx="9" fill="#fff" stroke="#3554d1"/><text x="480" y="143" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f1b2d">Orchestration (n8n) + data plane</text><text x="480" y="159" text-anchor="middle" font-size="10" fill="#64748b">routes to a skill or to knowledge</text>
+    <rect x="290" y="186" width="380" height="40" rx="9" fill="#fff" stroke="#7a5bd6"/><text x="480" y="211" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f1b2d">LLM (swappable): GigaChat / OpenAI · GPU later</text>
+    <rect x="290" y="246" width="380" height="42" rx="9" fill="#fff" stroke="#d04545"/><text x="480" y="265" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f1b2d">Tenant isolation · RBAC · audit</text><text x="480" y="281" text-anchor="middle" font-size="10" fill="#64748b">companies' data strictly separated</text>
+    <rect x="290" y="308" width="380" height="44" rx="9" fill="#fff" stroke="#3554d1"/><text x="480" y="328" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f1b2d">No-code AI builder + Office output</text><text x="480" y="344" text-anchor="middle" font-size="10" fill="#64748b">workspaces, chat, .xlsx/.docx/.pptx</text>
+    <rect x="740" y="120" width="140" height="220" rx="12" fill="#f1f5fb" stroke="#d4ddea"/>
+    <text x="810" y="144" text-anchor="middle" font-size="13" font-weight="700" fill="#0f1b2d">Users</text>
+    <rect x="755" y="158" width="110" height="50" rx="8" fill="#fff" stroke="#d4ddea"/><text x="810" y="180" text-anchor="middle" font-size="11" fill="#0f1b2d">Managers</text><text x="810" y="196" text-anchor="middle" font-size="9.5" fill="#64748b">real numbers</text>
+    <rect x="755" y="218" width="110" height="50" rx="8" fill="#fff" stroke="#d4ddea"/><text x="810" y="240" text-anchor="middle" font-size="11" fill="#0f1b2d">Teams</text><text x="810" y="256" text-anchor="middle" font-size="9.5" fill="#64748b">knowledge chat</text>
+    <rect x="755" y="278" width="110" height="50" rx="8" fill="#fff" stroke="#d4ddea"/><text x="810" y="300" text-anchor="middle" font-size="11" fill="#0f1b2d">Tech staff</text><text x="810" y="316" text-anchor="middle" font-size="9.5" fill="#64748b">skills, connectors</text>
+    <line x1="210" y1="99" x2="288" y2="80" stroke="#64748b" marker-end="url(#ar)"/>
+    <line x1="210" y1="147" x2="288" y2="82" stroke="#64748b" marker-end="url(#ar)"/>
+    <line x1="210" y1="193" x2="488" y2="82" stroke="#64748b" marker-end="url(#ar)"/>
+    <line x1="688" y1="208" x2="752" y2="186" stroke="#64748b" marker-end="url(#ar)"/>
+    <line x1="688" y1="330" x2="752" y2="250" stroke="#64748b" marker-end="url(#ar)"/>
+    <line x1="752" y1="300" x2="672" y2="80" stroke="#64748b" marker-end="url(#ar)" stroke-dasharray="4 3"/>
+  </svg>
+  </div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s12">
+  <h2><span class="nbadge">12</span><span class="ru">Технологический стек</span><span class="en">Technology stack</span></h2>
+  <div class="box good"><b><span class="ru">Принцип: настраиваем, а не пишем с нуля.</span><span class="en">Principle: configure, don't rebuild.</span></b> <span class="ru">Готовый движок закрывает ~80%. KIT строит тонкий «свой» слой: подключение компаний, SSO, реестр навыков, RBAC, governance, брендирование.</span><span class="en">An existing engine covers ~80%. KIT builds a thin custom layer: company onboarding, SSO, skill registry, RBAC, governance, branding.</span></div>
+  <table>
+    <tr><th><span class="ru">Компонент</span><span class="en">Component</span></th><th><span class="ru">Инструмент</span><span class="en">Tool</span></th><th><span class="ru">Назначение</span><span class="en">Purpose</span></th></tr>
+    <tr><td><span class="ru">Конструктор без кода</span><span class="en">No-code builder</span></td><td>AnythingLLM / Open WebUI</td><td><span class="ru">Пространства, чат, ассистенты, RAG</span><span class="en">Workspaces, chat, assistants, RAG</span></td></tr>
+    <tr><td><span class="ru">Векторная БД</span><span class="en">Vector DB</span></td><td>Qdrant / pgvector</td><td><span class="ru">Хранение и поиск знаний</span><span class="en">Store and search knowledge</span></td></tr>
+    <tr><td><span class="ru">База приложения</span><span class="en">App database</span></td><td>PostgreSQL</td><td><span class="ru">Аккаунты, арендаторы, навыки, аудит</span><span class="en">Accounts, tenants, skills, audit</span></td></tr>
+    <tr><td><span class="ru">Оркестрация</span><span class="en">Orchestration</span></td><td>n8n</td><td><span class="ru">Маршрутизация, регулярные навыки</span><span class="en">Routing, scheduled skills</span></td></tr>
+    <tr><td>LLM</td><td>GigaChat / OpenAI · Ollama/vLLM</td><td><span class="ru">Генерация ответов (сменная)</span><span class="en">Answer generation (swappable)</span></td></tr>
+    <tr><td><span class="ru">Office-генерация</span><span class="en">Office generation</span></td><td>docx / xlsx / pptx</td><td><span class="ru">Готовые документы как навыки</span><span class="en">Ready documents as skills</span></td></tr>
+    <tr><td><span class="ru">Безопасность</span><span class="en">Security</span></td><td>SSO / RBAC</td><td><span class="ru">Изоляция, разграничение, аудит</span><span class="en">Isolation, access control, audit</span></td></tr>
+  </table>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s13">
+  <h2><span class="nbadge">13</span><span class="ru">Риски и контроль</span><span class="en">Risks and controls</span></h2>
+  <table>
+    <tr><th><span class="ru">Риск</span><span class="en">Risk</span></th><th><span class="ru">Почему критичен</span><span class="en">Why it matters</span></th><th><span class="ru">Контроль</span><span class="en">Control</span></th></tr>
+    <tr><td><span class="ru">Утечка между арендаторами</span><span class="en">Cross-tenant leak</span></td><td><span class="ru">Данные А у Б = инцидент</span><span class="en">A's data at B = incident</span></td><td><span class="ru">Изоляция, RBAC, аудит, тест до регулируемых данных</span><span class="en">Isolation, RBAC, audit, test before regulated data</span></td></tr>
+    <tr><td><span class="ru">Нарушение прав внутри компании</span><span class="en">In-company access breach</span></td><td><span class="ru">HR увидел финансы</span><span class="en">HR sees financials</span></td><td><span class="ru">Permission-aware retrieval, fail-closed</span><span class="en">Permission-aware retrieval, fail-closed</span></td></tr>
+    <tr><td><span class="ru">Неверные цифры</span><span class="en">Wrong numbers</span></td><td><span class="ru">Решение на «галлюцинации»</span><span class="en">Decisions on a hallucination</span></td><td><span class="ru">Навыки, показ запроса, «проверьте»</span><span class="en">Skills, show the query, "verify"</span></td></tr>
+    <tr><td><span class="ru">Переусложнение</span><span class="en">Over-scope</span></td><td><span class="ru">Проект без запуска</span><span class="en">A project that never ships</span></td><td><span class="ru">Старт со знаний + навыков</span><span class="en">Start with knowledge + skills</span></td></tr>
+    <tr><td><span class="ru">Данные во внешний API</span><span class="en">Data to external API</span></td><td><span class="ru">Не для строгих заказчиков</span><span class="en">Not for strict customers</span></td><td><span class="ru">GigaChat (РФ); Фаза 2 — GPU</span><span class="en">GigaChat (RU); Phase 2 — GPU</span></td></tr>
+  </table>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s14">
+  <h2><span class="nbadge">14</span><span class="ru">План внедрения</span><span class="en">Rollout plan</span></h2>
+  <p class="ru">Базовая линия — три компании группы как арендаторы, <strong>в строгой последовательности</strong>. У каждой свои метрики успеха.</p>
+  <p class="en">The baseline is three group companies as tenants, in <strong>strict sequence</strong>. Each has its own success metrics.</p>
+  <table>
+    <tr><th>#</th><th><span class="ru">Компания</span><span class="en">Company</span></th><th><span class="ru">Фокус</span><span class="en">Focus</span></th><th><span class="ru">Что доказывает</span><span class="en">What it proves</span></th><th>KPI</th></tr>
+    <tr><td>1</td><td>Koinoti</td><td><span class="ru">Знания (документы)</span><span class="en">Knowledge (documents)</span></td><td><span class="ru">Мультиарендность, RBAC, no-code</span><span class="en">Multi-tenancy, RBAC, no-code</span></td><td><span class="ru">Время поиска</span><span class="en">Search time</span></td></tr>
+    <tr><td>2</td><td>Evar</td><td><span class="ru">Данные (ритейл, 2–3 навыка)</span><span class="en">Data (retail, 2–3 skills)</span></td><td><span class="ru">Живые цифры на нерегулируемых данных; изоляция</span><span class="en">Live numbers on non-regulated data; isolation</span></td><td><span class="ru">Точность, списания</span><span class="en">Accuracy, write-offs</span></td></tr>
+    <tr><td>3</td><td>Dusti Pharma</td><td><span class="ru">Витрина (аптеки)</span><span class="en">Showcase (pharmacies)</span></td><td><span class="ru">Ценность на флагмане — после изоляции</span><span class="en">Value on the flagship — after isolation</span></td><td><span class="ru">Списания (сомони)</span><span class="en">Write-offs (somoni)</span></td></tr>
+  </table>
+  <div class="box warn"><b><span class="ru">Правило последовательности.</span><span class="en">Sequencing rule.</span></b> <span class="ru">Dusti Pharma — третий, а не второй: нельзя отлаживать изоляцию на регулируемых данных. Демо аптек и доступ к БД уже готовятся — «в очереди».</span><span class="en">Dusti Pharma is third, not second: never debug isolation on regulated data. The pharmacy demo and DB access are already underway — queued and ready.</span></div>
+  <div class="phase">
+    <div class="b"><h4><span class="ru">Фаза 0 — пилот</span><span class="en">Phase 0 — pilot</span></h4><span class="ru">Движок на сервере KIT; знания Koinoti + 1–2 навыка Evar.</span><span class="en">Engine on KIT's server; Koinoti knowledge + 1–2 Evar skills.</span></div>
+    <div class="b"><h4><span class="ru">Фаза 1 — продукт</span><span class="en">Phase 1 — product</span></h4><span class="ru">KIT-hosted, LLM по API. Онбординг и подключение Dusti Pharma.</span><span class="en">KIT-hosted, LLM via API. Onboarding and connecting Dusti Pharma.</span></div>
+    <div class="b"><h4><span class="ru">Фаза 2 — масштаб</span><span class="en">Phase 2 — scale</span></h4><span class="ru">GPU, внешние заказчики, HA, биллинг.</span><span class="en">GPU, external customers, HA, billing.</span></div>
+  </div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s15">
+  <h2><span class="nbadge">15</span><span class="ru">Идеи для развития</span><span class="en">Roadmap ideas</span></h2>
+  <ul class="ru">
+    <li><strong>Генерация Office-файлов</strong> — отчёты в .xlsx / .docx / .pptx.</li>
+    <li><strong>Проактивные алерты</strong> (n8n): «партия истекает», «аномалия» — система сама пишет руководителю.</li>
+    <li><strong>Доставка через Telegram / WhatsApp</strong> — вопросы и отчёты в мессенджере.</li>
+    <li><strong>Библиотека навыков</strong> — переиспользование между компаниями.</li>
+    <li><strong>Мультиязычность</strong> — русский, таджикский, английский.</li>
+    <li><strong>Прозрачность</strong> — цитаты-источники и показ запроса.</li>
+    <li><strong>Дашборд использования и расходов</strong> на арендатора.</li>
+    <li><strong>Встраиваемый виджет</strong> в порталы компаний.</li>
+  </ul>
+  <ul class="en">
+    <li><strong>Office file generation</strong> — reports as .xlsx / .docx / .pptx.</li>
+    <li><strong>Proactive alerts</strong> (n8n): "batch expiring", "anomaly" — the system writes to the manager.</li>
+    <li><strong>Delivery via Telegram / WhatsApp</strong> — questions and reports in the messenger.</li>
+    <li><strong>Skill library</strong> — reuse across companies.</li>
+    <li><strong>Multilingual</strong> — Russian, Tajik, English.</li>
+    <li><strong>Transparency</strong> — source citations and showing the query.</li>
+    <li><strong>Usage & cost dashboard</strong> per tenant.</li>
+    <li><strong>Embeddable widget</strong> in company portals.</li>
+  </ul>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s16">
+  <h2><span class="nbadge">16</span><span class="ru">Ожидаемые вопросы</span><span class="en">Anticipated questions</span></h2>
+  <div class="qa"><div class="q"><span class="ru">Зачем своё, если есть ChatGPT / Glean?</span><span class="en">Why build our own when ChatGPT / Glean exist?</span></div><div class="a"><span class="ru">Данные в стране и в нашем периметре, дешевле, под нашим контролем, рус./тадж. язык, и в одном продукте — знания + живые данные + документы. Глобальные сервисы этого здесь не дают.</span><span class="en">Data stays in-country and in our perimeter, cheaper, under our control, RU/TJ language, and one product combines knowledge + live data + documents. Global services don't offer this here.</span></div></div>
+  <div class="qa"><div class="q"><span class="ru">Безопасно ли? Не утечёт ли между компаниями?</span><span class="en">Is it secure? Could data leak between companies?</span></div><div class="a"><span class="ru">Жёсткая изоляция, доступ по умолчанию-запрет, только чтение, аудит. Чувствительное — через GigaChat/локально. Изоляцию проверяем до подключения регулируемых данных.</span><span class="en">Hard isolation, default-deny access, read-only, audit. Sensitive data via GigaChat/local. We test isolation before connecting regulated data.</span></div></div>
+  <div class="qa"><div class="q"><span class="ru">А если ИИ выдаст неверную цифру?</span><span class="en">What if the AI gives a wrong number?</span></div><div class="a"><span class="ru">Частые вопросы решаются «навыками» — проверенными запросами. ИИ показывает источник и сам запрос. Последнее слово за человеком.</span><span class="en">Frequent questions resolve to "skills" — verified queries. The AI shows the source and the query itself. The human has the final word.</span></div></div>
+  <div class="qa"><div class="q"><span class="ru">Сколько стоит и какие ресурсы?</span><span class="en">What's the cost and resources?</span></div><div class="a"><span class="ru">Фаза 1 — на текущем сервере KIT, LLM по API. GPU покупаем только когда заказчик потребует или счёт за API превысит стоимость GPU.</span><span class="en">Phase 1 runs on KIT's current server, LLM via API. We buy a GPU only when a customer requires it or the API bill exceeds the GPU cost.</span></div></div>
+  <div class="qa"><div class="q"><span class="ru">Заменит ли это сотрудников?</span><span class="en">Will it replace employees?</span></div><div class="a"><span class="ru">Нет. ИИ усиливает людей. Урок рынка (Klarna): лучшие результаты — в связке «ИИ + человек».</span><span class="en">No. AI augments people. Market lesson (Klarna): the best results come from "AI + human" together.</span></div></div>
+  <div class="qa"><div class="q"><span class="ru">Что если не взлетит?</span><span class="en">What if it doesn't take off?</span></div><div class="a"><span class="ru">Пилот с критериями успеха и остановки на малых вложениях. По итогам — «масштабировать / доработать / остановить». Риск ограничен.</span><span class="en">A pilot with success and stop criteria on a small budget. At the end — "scale / improve / stop". Risk is limited.</span></div></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  <section id="s17">
+  <h2><span class="nbadge">17</span><span class="ru">Модель продаж</span><span class="en">Business model</span></h2>
+  <ul class="ru">
+    <li><strong>Внедрение / онбординг</strong> — разовая услуга (настройка данных, views, навыки).</li>
+    <li><strong>Подписка</strong> — за компанию и/или за пользователя.</li>
+    <li><strong>Потребление</strong> — по объёму запросов к LLM.</li>
+    <li><strong>Премиум</strong> — локальный вывод на GPU (Фаза 2).</li>
+  </ul>
+  <ul class="en">
+    <li><strong>Implementation / onboarding</strong> — one-off service (data setup, views, skills).</li>
+    <li><strong>Subscription</strong> — per company and/or per user.</li>
+    <li><strong>Usage</strong> — by volume of LLM queries.</li>
+    <li><strong>Premium</strong> — local GPU inference (Phase 2).</li>
+  </ul>
+  <div class="box warn"><b><span class="ru">Стратегическая заметка.</span><span class="en">Strategic note.</span></b> <span class="ru">Продажа вовне делает KIT SaaS-вендором (поддержка, SLA, биллинг). Сначала отточить внутри группы (Фаза 0–1), затем выходить вовне.</span><span class="en">Selling externally makes KIT a SaaS vendor (support, SLA, billing). First refine inside the group (Phase 0–1), then go external.</span></div>
+  <a class="top" href="#s0">↑</a>
+  </section>
+
+  </div>
+</main>
+</div>
+
+<script>
+const body=document.body;
+document.querySelectorAll('.lang button').forEach(b=>{
+  b.addEventListener('click',()=>{
+    body.dataset.lang=b.dataset.l;
+    document.querySelectorAll('.lang button').forEach(x=>x.classList.toggle('on',x===b));
+    document.documentElement.lang=b.dataset.l;
+  });
+});
+const links=[...document.querySelectorAll('nav a')];
+const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+const obs=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){const id='#'+e.target.id;links.forEach(a=>a.classList.toggle('active',a.getAttribute('href')===id));}});},{rootMargin:'-12% 0px -78% 0px'});
+secs.forEach(s=>s&&obs.observe(s));
+</script>
+</body>
+</html>

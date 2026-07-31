@@ -1,0 +1,31 @@
+# Secrets — never commit. .env holds real Anthropic/OpenAI/Telegram keys.
+.env
+.env.*
+!.env.example
+
+# Virtualenv / deps
+.venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Databases (runtime state, not source)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Build output
+web/.next/
+web/out/
+dist/
+build/
+*.egg-info/
+
+# Generated artifacts / scratch
+demo_sales.db
+*.log
+.DS_Store

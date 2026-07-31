@@ -1,0 +1,45 @@
+# Local KARAG stack: API + pgvector + Ollama (free local model).
+# Bring up:  docker compose up --build
+# Then pull models once:  docker compose exec ollama ollama pull qwen2.5 && \
+#                         docker compose exec ollama ollama pull nomic-embed-text
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: karag
+      POSTGRES_PASSWORD: karag
+      POSTGRES_DB: karag
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    ports:
+      - "5432:5432"
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  karag:
+    build: .
+    depends_on:
+      - db
+      - ollama
+    environment:
+      KARAG_GENERATOR: ollama          # swap to 'anthropic' + ANTHROPIC_API_KEY for prod
+      KARAG_EMBEDDER: ollama
+      KARAG_STORE: pgvector
+      KARAG_OLLAMA_URL: http://ollama:11434
+      KARAG_OLLAMA_CHAT_MODEL: qwen2.5
+      KARAG_OLLAMA_EMBED_MODEL: nomic-embed-text
+      KARAG_OLLAMA_EMBED_DIM: "768"
+      KARAG_PG_DSN: "host=db port=5432 dbname=karag user=karag password=karag"
+      KARAG_TOKENS: "tkn_ceo:koinoti:ceo1:ceo,tkn_admin:koinoti:admin1:admin"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+volumes:
+  pgdata:
+  ollama:
