@@ -267,6 +267,26 @@ async def test_failing_tests_are_recorded_not_hidden(repo):
     assert proposal.status == PENDING
 
 
+async def test_a_dropped_trailing_newline_does_not_pollute_the_diff(service, repo):
+    """Models routinely omit the final newline; the diff must stay readable."""
+    proposal = service.propose(
+        ENGINEER, summary="no trailing newline",
+        edits=[FileEdit(path="karag/sample.py", content="VALUE = 2")],  # no \n
+    )
+    assert "\\ No newline at end of file" not in proposal.diff
+    service.apply(ENGINEER, proposal.id)
+    assert (repo / "karag" / "sample.py").read_text() == "VALUE = 2\n"
+
+
+async def test_windows_line_endings_are_normalised(service, repo):
+    proposal = service.propose(
+        ENGINEER, summary="crlf",
+        edits=[FileEdit(path="karag/sample.py", content="A = 1\r\nB = 2\r\n")],
+    )
+    service.apply(ENGINEER, proposal.id)
+    assert (repo / "karag" / "sample.py").read_text() == "A = 1\nB = 2\n"
+
+
 async def test_proposing_refuses_on_a_dirty_tree(service, repo):
     from karag.engineer import GitError
 

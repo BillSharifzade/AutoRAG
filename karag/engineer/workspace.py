@@ -21,6 +21,19 @@ class GitError(KaragError):
     """A git command failed."""
 
 
+def _normalise(content: str) -> str:
+    """Normalise line endings and guarantee exactly one trailing newline.
+
+    A model reproducing a whole file routinely drops the final newline, which
+    turns every proposal into a diff carrying a spurious
+    "\\ No newline at end of file" on an otherwise untouched last line. That is
+    noise in a review whose entire value is being readable, so it is fixed here
+    rather than left for a human to notice each time.
+    """
+    text = content.replace("\r\n", "\n").replace("\r", "\n")
+    return text.rstrip("\n") + "\n" if text.strip() else text
+
+
 @dataclass
 class TestOutcome:
     passed: bool
@@ -113,7 +126,7 @@ class GitWorkspace:
             for rel_path, content in edits:
                 target = self.root / rel_path
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
+                target.write_text(_normalise(content), encoding="utf-8")
                 self._git("add", "--", rel_path)
 
             self._git(

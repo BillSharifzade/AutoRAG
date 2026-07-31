@@ -161,6 +161,27 @@ another tenant's data.
 * **Multilingual (RU / TJ / EN)** — the answer language resolves per request →
   account → tenant → deployment default, is pinnable on an assistant and on a
   messenger binding, and is switchable from the console topbar.
+* **Platform self-knowledge** — the assistant carries a handbook of what KARAG
+  is plus a capability guide for the asking user's roles, and can read its own
+  source (`search_codebase`, `read_source_file`) to answer implementation
+  questions from the current code, citing `path:line`. Secrets, databases and
+  `.git` are unreadable. New users get a one-time "show me around" tip that
+  generates a tour for their actual role.
+* **Operational skills** — the assistant can *act*: create accounts in bulk,
+  set roles, suspend an account, report usage and cost, list the tenant's
+  skills/documents/assistants/alerts. Every one runs under the caller's own
+  Principal, so an admin's request succeeds and an employee's identical request
+  is refused by the same code that guards the REST API. Batches are capped at
+  100, destructive actions need an explicit confirm, and `platform_admin` /
+  `karag_engineer` can never be granted this way.
+* **Guarded self-modification** — a `karag_engineer` can ask for a source
+  change. It is written on a fresh git branch by Opus 4.8, the full suite runs
+  against it, and the diff waits on the Engineering page for a human to apply
+  or discard; the running tree is never touched. Four independent gates:
+  the platform-level role (grantable only by a platform operator), a
+  deny-list no role can override (the RBAC matrix, the tenant directory, the
+  auth layer, the guard itself), a refusal on any turn carrying untrusted
+  content (prompt-injection barrier), and the human apply step.
 * **Document catalogue** — list and delete what has been ingested, filtered by
   the same clearance as retrieval (a title you may not read is not shown), plus
   an **advisory** data-class suggestion at upload (§7: suggestion only — it is
