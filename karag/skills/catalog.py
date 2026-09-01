@@ -37,8 +37,11 @@ from ..connectors.sql import SqlConnector
 from ..domain import DataClass, Principal
 from ..errors import AccessDenied, ValidationError
 from ..rbac import can_access
+from .agent_skill import SkillResource, make_agent_skill
 from .base import Skill
 from .definitions import (
+    AGENT,
+    CONNECTOR_KINDS,
     REST,
     SQL,
     SkillDefinition,
@@ -156,10 +159,12 @@ class SkillCatalog:
         name: str,
         description: str,
         kind: str,
-        connector_id: str,
+        connector_id: str = "",
         param_schema: dict | None = None,
         sql: str = "",
         path: str = "",
+        instructions: str = "",
+        resources: tuple[SkillResource, ...] = (),
         required_data_class: DataClass = DataClass.OPERATIONAL,
         required_roles: tuple[str, ...] = (),
         row_limit: int | None = None,
@@ -168,10 +173,14 @@ class SkillCatalog:
     ) -> SkillDefinition:
         self._require_author(principal, "skill_create", name)
         self._require_class_clearance(principal, required_data_class, "skill_create", name)
-        # a connector must exist *in this tenant* — this is what stops a skill
-        # from being pointed at another company's data source.
-        if self._connectors.get(principal.tenant_id, connector_id) is None:
-            raise ConnectorNotFound(connector_id)
+        # A lookup must name a connector that exists *in this tenant* — this is
+        # what stops a skill from being pointed at another company's data
+        # source. An agent skill reaches no data source, so it names none.
+        if kind in CONNECTOR_KINDS:
+            if self._connectors.get(principal.tenant_id, connector_id) is None:
+                raise ConnectorNotFound(connector_id)
+        else:
+            connector_id = ""
 
         defn = new_definition(
             principal.tenant_id,
@@ -182,6 +191,8 @@ class SkillCatalog:
             param_schema=param_schema,
             sql=sql,
             path=path,
+            instructions=instructions,
+            resources=tuple(resources),
             required_data_class=required_data_class,
             required_roles=tuple(required_roles),
             row_limit=row_limit,
@@ -214,9 +225,21 @@ class SkillCatalog:
                 self._require_class_clearance(principal, value, "skill_update", skill_id)
             if key == "required_roles":
                 value = tuple(value)
-            if key == "connector_id" and self._connectors.get(principal.tenant_id, value) is None:
-                raise ConnectorNotFound(value)
+            if key == "resources":
+                value = tuple(
+                    r if isinstance(r, SkillResource) else SkillResource.from_dict(r)
+                    for r in value
+                )
             setattr(defn, key, value)
+
+        # Checked against the *final* kind, not the order the fields arrived in:
+        # a skill switched to `agent` no longer needs a connector, and one
+        # switched to `sql` must have a real one before it is stored.
+        if defn.kind in CONNECTOR_KINDS:
+            if self._connectors.get(principal.tenant_id, defn.connector_id) is None:
+                raise ConnectorNotFound(defn.connector_id)
+        else:
+            defn.connector_id = ""
 
         validate_definition(defn)
         self._defs.update(defn)
@@ -267,14 +290,15 @@ class SkillCatalog:
         principal: Principal,
         source_skill_id: str,
         *,
-        connector_id: str,
+        connector_id: str = "",
         name: str | None = None,
     ) -> SkillDefinition:
         """Copy a shared definition into this tenant, bound to *its own* connector.
 
         The template travels; the data path does not. The copy is an ordinary
         local definition afterwards — editable, deletable, and executing only
-        against the importing tenant's connector.
+        against the importing tenant's connector. An agent skill has no data
+        path at all, so it copies whole and needs no connector.
         """
         self._require_author(principal, "library_import", source_skill_id)
         source = next(
@@ -294,6 +318,8 @@ class SkillCatalog:
             param_schema=source.param_schema,
             sql=source.sql,
             path=source.path,
+            instructions=source.instructions,
+            resources=tuple(source.resources),
             required_data_class=source.required_data_class,
             required_roles=source.required_roles,
             row_limit=source.row_limit,
@@ -319,8 +345,11 @@ class SkillCatalog:
             principal, defn.required_data_class, "skill_test", skill_id
         )
         try:
-            validate_arguments(defn.param_schema, arguments)
             skill = self.build_skill(defn)
+            # Validate against the *materialised* skill's schema: for a lookup
+            # that is the declared param schema, and for an agent skill it is
+            # the open/read-a-bundled-file schema the model actually sees.
+            validate_arguments(skill.input_schema, arguments)
             result = await skill.handler(principal, arguments)
         except Exception as exc:  # surfaced to the author, never to the model
             self._log(principal, "skill_test", "deny", skill_id, {"error": str(exc)})
@@ -338,6 +367,19 @@ class SkillCatalog:
 
     def build_skill(self, defn: SkillDefinition) -> Skill:
         """Turn one stored definition into an executable Skill."""
+        if defn.kind == AGENT:
+            # No connector is resolved: an agent skill has no data path, so it
+            # cannot fail to load because a database is unreachable.
+            return make_agent_skill(
+                name=defn.name,
+                description=defn.description,
+                instructions=defn.instructions,
+                resources=tuple(defn.resources),
+                required_data_class=defn.required_data_class,
+                required_roles=frozenset(defn.required_roles),
+                tenant_id=defn.tenant_id,
+            )
+
         connector = self._connector_for(defn.tenant_id, defn.connector_id)
         common = {
             "name": defn.name,

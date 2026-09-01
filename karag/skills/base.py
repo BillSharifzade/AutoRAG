@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from ..domain import Artifact, DataClass, Principal
+from ..domain import Artifact, Citation, DataClass, Principal
 from ..llm.base import ToolSpec
 
 # A handler runs a *verified, read-only* query. It receives the calling
@@ -30,6 +30,11 @@ class SkillResult:
     # optional generated file (Office output skills). Carried out-of-band so its
     # bytes never enter the model's context.
     artifact: Artifact | None = None
+    # Sources this skill read that the reader should be able to open and check.
+    # A document-plane answer gets its citations from retrieval; a skill that
+    # goes out to the web has to supply its own, or the claim would arrive with
+    # nothing behind it. Carried out-of-band and merged by the orchestrator.
+    citations: list[Citation] = field(default_factory=list)
 
 
 @dataclass

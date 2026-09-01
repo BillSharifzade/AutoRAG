@@ -1,393 +1,362 @@
 "use client";
 
-/* Audit trail (admin-only): every ingest / retrieval / skill run / ask, with
-   its allow-or-deny decision and the device + identity it came from. Deny rows
-   prove fail-closed RBAC. Search, decision filter, and expandable detail. */
+/* Activity — who did what, and whether it was allowed.
+ *
+ * The wire format is `noun.verb` plus a decision flag, which reads as machine
+ * output. Here every event becomes a sentence, and the log is drawn as a
+ * timeline so a run of events reads as a sequence of things that happened
+ * rather than rows in a table.
+ *
+ * The signature is the blocked lane: refusals sit on the same spine as
+ * everything else but in the refusal colour, so scanning the left edge tells
+ * you instantly whether the day was quiet. That is the whole point of an audit
+ * trail and it should be visible without reading a word. */
 
 import {
-  CheckCircle2,
-  Globe,
-  MonitorSmartphone,
-  RefreshCw,
-  ScrollText,
+  Activity,
+  Ban,
   Search,
+  RefreshCw,
   ShieldCheck,
-  UserRound,
-  XCircle,
+  User,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, useState } from "react";
 import { api, type ApiError, type AuditEvent } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { Button, Card, CardHeader, EmptyState, Rise } from "@/components/ui";
-import { AuditSkeleton } from "@/components/skeleton";
+import { useLoad } from "@/lib/use-load";
+import { actionWords, errorWords, roleLabel, whenWords } from "@/lib/words";
+import { Button, Input } from "@/components/ui";
+import {
+  CountUp,
+  EASE,
+  Empty,
+  Notice,
+  PageHero,
+  Restricted,
+  Segmented,
+  Stagger,
+  StaggerItem,
+} from "@/components/pro";
+import { SkeletonText } from "@/components/skeleton";
 
-/* ---------- helpers ---------- */
+type Lens = "all" | "allow" | "deny";
 
-/** Parse a User-Agent into a friendly "Browser · OS" label. */
-function parseUA(ua?: string): { browser: string; os: string } {
-  if (!ua) return { browser: "Unknown", os: "" };
-  let browser = "Unknown";
-  if (/Edg\//.test(ua)) browser = "Edge";
-  else if (/OPR\/|Opera/.test(ua)) browser = "Opera";
-  else if (/Firefox\//.test(ua)) browser = "Firefox";
-  else if (/Chrome\//.test(ua)) browser = "Chrome";
-  else if (/Safari\//.test(ua)) browser = "Safari";
-  else if (/curl\//.test(ua)) browser = "curl";
-  else if (/python|httpx|requests/i.test(ua)) browser = "Script";
-
-  let os = "";
-  if (/Windows NT 10/.test(ua)) os = "Windows";
-  else if (/Windows/.test(ua)) os = "Windows";
-  else if (/Android/.test(ua)) os = "Android";
-  else if (/iPhone|iPad|iOS/.test(ua)) os = "iOS";
-  else if (/Mac OS X/.test(ua)) os = "macOS";
-  else if (/Linux/.test(ua)) os = "Linux";
-  return { browser, os };
-}
-
-function relTime(ts?: number): string {
-  if (!ts) return "";
-  const secs = Math.max(0, Date.now() / 1000 - ts);
-  if (secs < 60) return "just now";
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return new Date(ts * 1000).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function absTime(ts?: number): string {
-  if (!ts) return "";
-  return new Date(ts * 1000).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "medium",
-  });
-}
-
-function DecisionPill({ decision }: { decision: AuditEvent["decision"] }) {
-  return decision === "allow" ? (
-    <span className="inline-flex items-center gap-1 rounded-md bg-good-soft px-2 py-0.5 text-[11.5px] font-semibold text-good">
-      <CheckCircle2 className="size-3" /> allow
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 rounded-md bg-bad-soft px-2 py-0.5 text-[11.5px] font-semibold text-bad">
-      <XCircle className="size-3" /> deny
-    </span>
-  );
-}
-
-/* ---------- stat strip ---------- */
-
-function Stat({
-  icon,
-  label,
-  value,
-  tone = "accent",
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number | string;
-  tone?: "accent" | "good" | "bad";
-}) {
-  const toneCls = {
-    accent: "bg-accent-soft text-accent",
-    good: "bg-good-soft text-good",
-    bad: "bg-bad-soft text-bad",
-  }[tone];
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-      <span className={`grid size-9 place-items-center rounded-lg ${toneCls}`}>
-        {icon}
-      </span>
-      <div>
-        <p className="font-display text-[20px] font-bold leading-none tabular-nums">
-          {value}
-        </p>
-        <p className="mt-1 text-[11.5px] text-mut">{label}</p>
-      </div>
-    </div>
-  );
-}
-
-type DecisionFilter = "all" | "allow" | "deny";
-
-/* ---------- row ---------- */
-
-function EventRow({ e, i }: { e: AuditEvent; i: number }) {
-  const [open, setOpen] = useState(false);
-  const ua = parseUA(e.user_agent);
-  const hasDetail = e.detail && Object.keys(e.detail).length > 0;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(i * 0.02, 0.25), duration: 0.3 }}
-      className="rounded-xl border border-line bg-surface transition-colors hover:border-line-strong"
-    >
-      <button
-        onClick={() => hasDetail && setOpen((o) => !o)}
-        className={`flex w-full items-center gap-4 px-4 py-3 text-left ${
-          hasDetail ? "cursor-pointer" : "cursor-default"
-        }`}
-      >
-        {/* action + decision */}
-        <div className="flex w-40 shrink-0 items-center gap-2.5">
-          <DecisionPill decision={e.decision} />
-          <span className="truncate text-[13px] font-semibold">{e.action}</span>
-        </div>
-
-        {/* identity */}
-        <div className="hidden w-40 shrink-0 items-center gap-1.5 sm:flex">
-          <UserRound className="size-3.5 shrink-0 text-faint" />
-          <span className="truncate font-mono text-[12px]">{e.user_id}</span>
-          {e.roles && e.roles.length > 0 && (
-            <span className="truncate rounded bg-accent-soft px-1.5 py-0.5 text-[10.5px] font-semibold text-accent-strong">
-              {e.roles.join(" · ")}
-            </span>
-          )}
-        </div>
-
-        {/* device */}
-        <div className="hidden min-w-0 flex-1 items-center gap-4 md:flex">
-          <span
-            className="inline-flex items-center gap-1.5 text-[12px] text-mut"
-            title={e.ip || "unknown"}
-          >
-            <Globe className="size-3.5 shrink-0 text-faint" />
-            {e.ip || "—"}
-          </span>
-          <span
-            className="inline-flex items-center gap-1.5 text-[12px] text-mut"
-            title={e.user_agent || "unknown"}
-          >
-            <MonitorSmartphone className="size-3.5 shrink-0 text-faint" />
-            {ua.browser}
-            {ua.os ? ` · ${ua.os}` : ""}
-          </span>
-        </div>
-
-        {/* time */}
-        <span
-          className="ml-auto shrink-0 text-[12px] tabular-nums text-faint"
-          title={absTime(e.ts)}
-        >
-          {relTime(e.ts)}
-        </span>
-      </button>
-
-      <AnimatePresence initial={false}>
-        {open && hasDetail && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="border-t border-line px-4 py-3">
-              <div className="mb-2 flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-mut sm:hidden">
-                <span>User: {e.user_id}</span>
-                {e.ip && <span>IP: {e.ip}</span>}
-              </div>
-              <pre className="overflow-x-auto rounded-lg border border-line bg-bg-deep p-3 font-mono text-[11.5px] leading-relaxed text-mut">
-                {JSON.stringify({ resource: e.resource, ...e.detail }, null, 2)}
-              </pre>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  );
-}
-
-/* ---------- page ---------- */
+/** Events shown before the list asks to go further back. */
+const PAGE = 40;
 
 export default function AuditPage() {
-  const { token } = useAuth();
+  const { token, me } = useAuth();
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
-  const [filter, setFilter] = useState("");
-  const [decision, setDecision] = useState<DecisionFilter>("all");
+  const [lens, setLens] = useState<Lens>("all");
+  const [query, setQuery] = useState("");
+  const [limit, setLimit] = useState(PAGE);
 
   const load = useCallback(async () => {
-    setBusy(true);
-    setError(null);
+    if (!token) return;
     try {
-      const d = await api.audit(token);
-      setEvents([...d.events].reverse().slice(0, 300));
+      const r = await api.audit(token);
+      setEvents(r.events);
+      setProblem("");
     } catch (e) {
-      setError((e as ApiError).message);
-      setEvents(null);
+      setProblem(errorWords((e as ApiError).message));
+      setEvents([]);
     } finally {
       setBusy(false);
     }
   }, [token]);
 
-  useEffect(() => {
+  /* The spinner belongs to the refresh button. The first load is covered by the
+     skeleton, and raising the flag there would mean a setState inside the mount
+     effect for a state nothing is showing yet. */
+  const refresh = useCallback(() => {
+    setBusy(true);
     void load();
   }, [load]);
 
-  const counts = useMemo(() => {
-    const allow = events?.filter((e) => e.decision === "allow").length ?? 0;
-    const deny = events?.filter((e) => e.decision === "deny").length ?? 0;
-    return { total: events?.length ?? 0, allow, deny };
-  }, [events]);
+  useLoad(load);
 
-  const filtered = useMemo(() => {
-    if (!events) return null;
-    const q = filter.trim().toLowerCase();
-    return events.filter((e) => {
-      if (decision !== "all" && e.decision !== decision) return false;
+  const blocked = useMemo(
+    () => (events ?? []).filter((e) => e.decision === "deny").length,
+    [events],
+  );
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (events ?? []).filter((e) => {
+      if (lens !== "all" && e.decision !== lens) return false;
       if (!q) return true;
-      return [
-        e.action,
-        e.decision,
-        e.user_id,
-        e.resource,
-        e.ip,
-        e.user_agent,
-        (e.roles ?? []).join(" "),
-        JSON.stringify(e.detail),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
+      return (
+        e.user_id.toLowerCase().includes(q) ||
+        actionWords(e.action).toLowerCase().includes(q) ||
+        (e.resource ?? "").toLowerCase().includes(q)
+      );
     });
-  }, [events, filter, decision]);
+  }, [events, lens, query]);
 
-  if (!events && !error) {
+  /* A refusal is the interesting case, so it's never hidden behind the
+     "restricted" wall without saying who can see it. */
+  if (problem && (events?.length ?? 0) === 0) {
     return (
-      <Rise>
-        <AuditSkeleton />
-      </Rise>
+      <Stagger>
+        <StaggerItem>
+          <Restricted
+            what="The activity log is for administrators"
+            who="It records every question, every document read and every refusal across the company — including who asked and from where. That's kept to administrators."
+            yourRole={me?.roles.map(roleLabel).join(", ")}
+          />
+        </StaggerItem>
+      </Stagger>
     );
   }
 
-  const DECISIONS: { key: DecisionFilter; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "allow", label: "Allow" },
-    { key: "deny", label: "Deny" },
-  ];
-
   return (
-    <Rise className="flex flex-col gap-6">
-      {!error && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Stat
-            icon={<ScrollText className="size-4" />}
-            label="Total events"
-            value={counts.total}
-          />
-          <Stat
-            icon={<CheckCircle2 className="size-4" />}
-            label="Allowed"
-            value={counts.allow}
-            tone="good"
-          />
-          <Stat
-            icon={<XCircle className="size-4" />}
-            label="Denied (fail-closed)"
-            value={counts.deny}
-            tone="bad"
-          />
-        </div>
-      )}
+    <Stagger className="flex flex-col gap-6">
+      <PageHero
+        eyebrow="Activity"
+        title="Everything that happened, in order"
+        lead="Every question asked, every document read, every refusal — with who, when and from where. Nothing here can be edited, including by an administrator."
+        art={
+          events && events.length > 0 ? (
+            <div className="flex gap-3">
+              <Tally
+                label="Recorded"
+                value={events.length}
+                tone="neutral"
+                icon={<Activity className="size-4" />}
+              />
+              <Tally
+                label="Blocked"
+                value={blocked}
+                tone={blocked > 0 ? "bad" : "good"}
+                icon={
+                  blocked > 0 ? (
+                    <Ban className="size-4" />
+                  ) : (
+                    <ShieldCheck className="size-4" />
+                  )
+                }
+              />
+            </div>
+          ) : undefined
+        }
+      />
 
-      <Card>
-        <CardHeader
-          icon={<ScrollText className="size-4" />}
-          title="Audit trail"
-          sub="Newest first · last 300 events · IP, device & role captured · admin only."
-          right={
+      <StaggerItem>
+        <section className="overflow-hidden rounded-3xl border border-line bg-surface [box-shadow:var(--shadow)]">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
+            <Segmented
+              value={lens}
+              onChange={(l) => {
+                setLens(l);
+                setLimit(PAGE);
+              }}
+              ariaLabel="Which events"
+              options={[
+                { value: "all", label: "Everything" },
+                { value: "allow", label: "Allowed" },
+                { value: "deny", label: "Blocked", count: blocked },
+              ]}
+            />
             <div className="flex items-center gap-2">
-              <div className="hidden items-center gap-1 rounded-xl border border-line bg-surface-2 p-1 md:flex">
-                {DECISIONS.map((d) => {
-                  const active = d.key === decision;
-                  return (
-                    <button
-                      key={d.key}
-                      onClick={() => setDecision(d.key)}
-                      className={`relative rounded-lg px-2.5 py-1 text-[12px] font-semibold transition-colors ${
-                        active ? "text-white" : "text-mut hover:text-ink"
-                      }`}
-                    >
-                      {active && (
-                        <motion.span
-                          layoutId="audit-decision-pill"
-                          className="absolute inset-0 rounded-lg bg-accent"
-                          transition={{ type: "spring", stiffness: 420, damping: 34 }}
-                        />
-                      )}
-                      <span className="relative z-10">{d.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="relative hidden sm:block">
-                <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
-                <input
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  placeholder="Filter…"
-                  className="h-9 w-44 rounded-xl border border-line bg-surface pl-8.5 pr-3 text-[13px] transition-colors placeholder:text-faint hover:border-line-strong focus:border-accent"
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search by person or action…"
+                  aria-label="Search activity"
+                  className="w-60 pl-9"
                 />
               </div>
-              <Button variant="soft" size="sm" onClick={load} busy={busy}>
-                <RefreshCw className="size-3.5" /> Refresh
+              <Button variant="ghost" size="icon" onClick={refresh} busy={busy}>
+                <RefreshCw className="size-4" />
               </Button>
             </div>
-          }
-        />
+          </header>
 
-        <div className="p-6 pt-4">
-          {error && (
-            <EmptyState
-              icon={<ScrollText className="size-6" />}
-              title="Not available"
-              hint={error}
-            />
+          <div className="p-6 pt-5">
+            {problem && (
+              <div className="mb-4">
+                <Notice tone="warn">{problem}</Notice>
+              </div>
+            )}
+
+            {events === null ? (
+              <SkeletonText lines={6} />
+            ) : shown.length === 0 ? (
+              <Empty
+                icon={<Activity className="size-6" />}
+                title={
+                  events.length === 0 ? "Nothing recorded yet" : "Nothing matches"
+                }
+                hint={
+                  events.length === 0
+                    ? "Ask a question or add a document — everything anyone does lands here within a second."
+                    : "Try a different name, or switch back to Everything."
+                }
+              />
+            ) : (
+              <>
+                <ol className="relative flex flex-col">
+                  {/* the spine */}
+                  <span
+                    aria-hidden
+                    className="absolute bottom-3 left-[15.5px] top-3 w-0.5 rounded-full bg-line-strong/60"
+                  />
+                  <AnimatePresence initial={false}>
+                    {shown.slice(0, limit).map((e, i) => (
+                      <Event key={`${e.ts}-${i}`} e={e} i={i} />
+                    ))}
+                  </AnimatePresence>
+                </ol>
+                {shown.length > limit && (
+                  <button
+                    onClick={() => setLimit((l) => l + PAGE)}
+                    className="mt-4 w-full cursor-pointer rounded-xl border border-line py-2.5 text-[13px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
+                  >
+                    Go further back ({shown.length - limit} more)
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+      </StaggerItem>
+    </Stagger>
+  );
+}
+
+/* ---------- pieces ---------- */
+
+function Tally({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: number;
+  tone: "neutral" | "good" | "bad";
+  icon: React.ReactNode;
+}) {
+  const cls = {
+    neutral: "bg-surface-2 text-mut",
+    good: "bg-good-soft text-good",
+    bad: "bg-bad-soft text-bad",
+  }[tone];
+  return (
+    <div className="rounded-2xl border border-line bg-surface px-4 py-3">
+      <span className="flex items-center gap-2">
+        <span className={`grid size-7 place-items-center rounded-lg ${cls}`}>
+          {icon}
+        </span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.09em] text-mut">
+          {label}
+        </span>
+      </span>
+      <CountUp
+        value={value}
+        className="font-display mt-1.5 block text-[24px] font-bold leading-none tabular-nums"
+      />
+    </div>
+  );
+}
+
+/* Opaque handles (conn_cc1047a2…, skl_1cb3056b…) and internal component names
+   tell a reader nothing. They stay available in the expanded detail, but the
+   line itself only carries a resource when it's something a person recognises. */
+const OPAQUE = /^[a-z]+_[0-9a-f]{8,}$/;
+const INTERNAL = new Set(["knowledge", "orchestrator", "assistant"]);
+
+function readableResource(r: string | undefined): string | null {
+  if (!r || OPAQUE.test(r) || INTERNAL.has(r)) return null;
+  return r;
+}
+
+function Event({ e, i }: { e: AuditEvent; i: number }) {
+  const [open, setOpen] = useState(false);
+  const denied = e.decision === "deny";
+  const detail = Object.entries(e.detail ?? {}).filter(
+    ([, v]) => v !== null && v !== "",
+  );
+  const resource = readableResource(e.resource);
+  const hasMore = detail.length > 0 || e.ip || e.user_agent || e.resource;
+
+  return (
+    <motion.li
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(i * 0.015, 0.3), ease: EASE }}
+      className="relative flex gap-3.5 py-2"
+    >
+      {/* node on the spine — colour carries allow/deny at a glance */}
+      <span
+        className={`relative z-10 mt-1 grid size-8 shrink-0 place-items-center rounded-full border-2 border-surface ${
+          denied ? "bg-bad-soft text-bad" : "bg-surface-2 text-mut"
+        }`}
+      >
+        {denied ? <Ban className="size-3.5" /> : <User className="size-3.5" />}
+      </span>
+
+      <div className="min-w-0 flex-1 rounded-xl border border-transparent px-2 py-1 transition-colors hover:border-line hover:bg-surface-2">
+        <button
+          onClick={() => hasMore && setOpen((o) => !o)}
+          className={`flex w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 text-left ${
+            hasMore ? "cursor-pointer" : "cursor-default"
+          }`}
+        >
+          <span className="text-[13.5px] font-semibold">{e.user_id}</span>
+          <span className="text-[13.5px] text-mut">{actionWords(e.action)}</span>
+          {denied && (
+            <span className="rounded-md bg-bad-soft px-1.5 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-bad">
+              blocked
+            </span>
           )}
+          <span className="ml-auto shrink-0 text-[12px] tabular-nums text-faint">
+            {e.ts ? whenWords(e.ts) : ""}
+          </span>
+        </button>
 
-          {filtered && filtered.length === 0 && (
-            <EmptyState
-              icon={<ScrollText className="size-6" />}
-              title={filter || decision !== "all" ? "No matches" : "No events yet"}
-              hint={
-                filter || decision !== "all"
-                  ? "Try a different filter."
-                  : "Ask a question or ingest a document — every action lands here."
-              }
-            />
+        {resource && (
+          <p className="truncate text-[12px] text-faint">{resource}</p>
+        )}
+
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.22, ease: EASE }}
+              className="overflow-hidden"
+            >
+              <dl className="mt-2 grid gap-x-6 gap-y-1 rounded-lg bg-bg-deep p-3 text-[12px] sm:grid-cols-2">
+                {e.roles && e.roles.length > 0 && (
+                  <Row k="Signed in as" v={e.roles.map(roleLabel).join(", ")} />
+                )}
+                {e.resource && <Row k="Applied to" v={e.resource} />}
+                {e.ip && <Row k="From" v={e.ip} />}
+                {e.user_agent && <Row k="Device" v={e.user_agent} />}
+                {detail.map(([k, v]) => (
+                  <Row key={k} k={k.replace(/_/g, " ")} v={String(v)} />
+                ))}
+              </dl>
+            </motion.div>
           )}
+        </AnimatePresence>
+      </div>
+    </motion.li>
+  );
+}
 
-          {filtered && filtered.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {filtered.map((e, i) => (
-                <EventRow key={`${e.ts}-${i}`} e={e} i={i} />
-              ))}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {!error && (
-        <p className="flex items-center justify-center gap-1.5 text-center text-[12px] text-faint">
-          <ShieldCheck className="size-3.5" />
-          IP, browser/OS and role are captured from each request. A device&apos;s
-          MAC / hardware ID isn&apos;t transmitted over the web, so it can&apos;t
-          be recorded here.
-        </p>
-      )}
-    </Rise>
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex min-w-0 gap-2">
+      <dt className="shrink-0 capitalize text-faint">{k}</dt>
+      <dd className="min-w-0 truncate text-mut">{v}</dd>
+    </div>
   );
 }

@@ -90,7 +90,7 @@ export function CardHeader({
 
 type ButtonProps = Omit<HTMLMotionProps<"button">, "children"> & {
   children?: ReactNode;
-  variant?: "primary" | "soft" | "ghost" | "danger";
+  variant?: "primary" | "cta" | "soft" | "ghost" | "danger";
   busy?: boolean;
   size?: "md" | "sm" | "icon";
 };
@@ -107,6 +107,8 @@ export function Button({
   const styles = {
     primary:
       "brand-gradient text-accent-ink shadow-[0_2px_12px_-2px_rgb(62_59_78/0.55)] hover:shadow-[0_4px_20px_-2px_rgb(62_59_78/0.65)] hover:brightness-110",
+    /* The single strongest action on a page — the red gradient, spent once. */
+    cta: "red-gradient text-accent-ink shadow-[0_2px_14px_-2px_rgb(236_35_54/0.5)] hover:shadow-[0_6px_22px_-2px_rgb(236_35_54/0.6)] hover:brightness-110",
     soft: "bg-accent-soft text-accent-strong hover:bg-accent-soft-2",
     ghost:
       "border border-line bg-surface text-mut hover:border-line-strong hover:text-ink",

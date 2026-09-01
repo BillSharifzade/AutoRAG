@@ -75,6 +75,23 @@ class Settings:
     anthropic_model: str = "claude-opus-4-8"
     anthropic_api_key: str | None = None
 
+    # web access: the one capability that points outward, so it is off unless
+    # asked for. "none" disables search; page reading follows it unless
+    # web_fetch is set independently.
+    web_search: str = "none"  # none | brave | tavily | serper | fake
+    # auto: page reading follows search. "1" turns it on by itself, which is
+    # the useful configuration for "read this link I pasted" without paying a
+    # search provider; "0" allows search but no page reading.
+    web_fetch: str = "auto"  # auto | 1 | 0
+    brave_api_key: str | None = None
+    tavily_api_key: str | None = None
+    serper_api_key: str | None = None
+    # comma-separated; empty allow-list means "anywhere public"
+    web_allow_hosts: str = ""
+    web_deny_hosts: str = ""
+    # roles that may search the web; empty means everyone who can chat
+    web_roles: str = ""
+
     # postgres
     pg_dsn: str = "postgresql://localhost/karag"
 
@@ -113,6 +130,14 @@ class Settings:
             repo_root=_get("KARAG_REPO_ROOT", "."),
             engineer_model=_get("KARAG_ENGINEER_MODEL", "claude-opus-4-8"),
             engineer_enabled=_get("KARAG_ENGINEER_ENABLED", "1") != "0",
+            web_search=_get("KARAG_WEB_SEARCH", "none"),
+            web_fetch=_get("KARAG_WEB_FETCH", "auto"),
+            brave_api_key=os.environ.get("BRAVE_API_KEY"),
+            tavily_api_key=os.environ.get("TAVILY_API_KEY"),
+            serper_api_key=os.environ.get("SERPER_API_KEY"),
+            web_allow_hosts=_get("KARAG_WEB_ALLOW_HOSTS", ""),
+            web_deny_hosts=_get("KARAG_WEB_DENY_HOSTS", ""),
+            web_roles=_get("KARAG_WEB_ROLES", ""),
             pg_dsn=_get("KARAG_PG_DSN", "postgresql://localhost/karag"),
             top_k=int(_get("KARAG_TOP_K", "5")),
             max_iterations=int(_get("KARAG_MAX_ITERATIONS", "4")),

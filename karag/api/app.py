@@ -65,6 +65,7 @@ from ..llm.transcribe import OpenAITranscriber, sniff_audio_name
 from ..messengers.bots import BotService, InMemorySenderResolver
 from ..messengers.inbound import parse_telegram_update, parse_whatsapp_update
 from ..pricing import PriceList
+from ..skills.agent_skill import SkillResource, parse_skill_md, render_skill_md
 from ..skills.catalog import can_author
 from ..tenants import LANGUAGES, validate_language
 from ..request_context import set_request_context
@@ -191,27 +192,44 @@ class ConnectorRequest(BaseModel):
     timeout_s: float = 5.0
 
 
+class SkillResourceRequest(BaseModel):
+    path: str
+    content: str = ""
+
+
 class SkillDefinitionRequest(BaseModel):
     name: str
     description: str
-    kind: str = "sql"  # sql | rest
-    connector_id: str
+    kind: str = "sql"  # sql | rest | agent
+    # An agent skill reaches no data source, so it names no connector.
+    connector_id: str = ""
     param_schema: dict | None = None
     sql: str = ""
     path: str = ""
+    instructions: str = ""
+    resources: list[SkillResourceRequest] = []
     required_data_class: DataClass = DataClass.OPERATIONAL
     required_roles: list[str] = []
     row_limit: int | None = None
     inject_tenant: bool = True
     shared: bool = False
 
+    def resource_tuple(self) -> tuple[SkillResource, ...]:
+        return tuple(SkillResource(path=r.path, content=r.content) for r in self.resources)
+
 
 class SkillTestRequest(BaseModel):
     arguments: dict = {}
 
 
+class SkillMarkdownRequest(BaseModel):
+    """A pasted SKILL.md, to be split into its fields before authoring."""
+
+    text: str
+
+
 class LibraryImportRequest(BaseModel):
-    connector_id: str
+    connector_id: str = ""
     name: str | None = None
 
 
@@ -500,6 +518,7 @@ def create_app(
             name=req.name, description=req.description, kind=req.kind,
             connector_id=req.connector_id, param_schema=req.param_schema,
             sql=req.sql, path=req.path,
+            instructions=req.instructions, resources=req.resource_tuple(),
             required_data_class=req.required_data_class,
             required_roles=tuple(req.required_roles), row_limit=req.row_limit,
             inject_tenant=req.inject_tenant, shared=req.shared,
@@ -523,6 +542,7 @@ def create_app(
             name=req.name, description=req.description, kind=req.kind,
             connector_id=req.connector_id, param_schema=req.param_schema,
             sql=req.sql, path=req.path,
+            instructions=req.instructions, resources=req.resource_tuple(),
             required_data_class=req.required_data_class,
             required_roles=tuple(req.required_roles), row_limit=req.row_limit,
             shared=req.shared,
@@ -545,6 +565,36 @@ def create_app(
     ) -> dict:
         run = await plat.catalog.test_skill(principal, skill_id, req.arguments)
         return run.to_dict()
+
+    @app.get("/v1/skills/definitions/{skill_id}/skill_md", response_class=PlainTextResponse)
+    async def export_skill_md(
+        skill_id: str, principal: Principal = Depends(principal_from)
+    ) -> str:
+        """An agent skill as a real ``SKILL.md``.
+
+        A procedure written here is portable: the same bytes load in Claude Code
+        or claude.ai, so the company's knowledge is not locked inside KARAG.
+        """
+        defn = plat.catalog.get_skill(principal, skill_id)
+        if defn.kind != "agent":
+            raise HTTPException(
+                status_code=400, detail="only a procedure has a SKILL.md"
+            )
+        return render_skill_md(defn.name, defn.description, defn.instructions)
+
+    @app.post("/v1/skills/parse_skill_md")
+    async def read_skill_md(
+        req: SkillMarkdownRequest, principal: Principal = Depends(principal_from)
+    ) -> dict:
+        """Split a pasted SKILL.md into fields, so an existing skill can be adopted.
+
+        Author-gated like every other authoring route, and purely a parse: it
+        stores nothing.
+        """
+        if not can_author(principal):
+            raise HTTPException(status_code=403, detail="not a skill author")
+        name, description, instructions = parse_skill_md(req.text)
+        return {"name": name, "description": description, "instructions": instructions}
 
     @app.get("/v1/skills/library")
     async def list_skill_library(principal: Principal = Depends(principal_from)) -> dict:

@@ -50,6 +50,28 @@ tests/              285 tests: RBAC, isolation, retrieval, RAG, skills, catalog,
 
 ## Run
 
+The whole platform — API, console and alert scheduler — in one command:
+
+```bash
+cp .env.example .env      # add ANTHROPIC_API_KEY and KARAG_TOKENS
+docker compose up --build
+```
+
+| | |
+|---|---|
+| Console | <http://localhost:3000> — sign in with a token from `KARAG_TOKENS` |
+| API | <http://localhost:8000> — `/health`, `/v1/*`, legacy console at `/ui` |
+
+State is SQLite under `./data`, bind-mounted into the containers, so it survives
+`docker compose down`. Point `KARAG_STORE` at pgvector for a real deployment.
+The Telegram bot is opt-in — it needs `KARAG_TELEGRAM_BOT_TOKEN`:
+
+```bash
+docker compose --profile telegram up
+```
+
+### Without Docker
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -U pip pytest pytest-asyncio

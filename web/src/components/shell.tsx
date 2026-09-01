@@ -2,7 +2,13 @@
 
 /* App shell: logo sidebar with an animated active pill, glass topbar, and a
    split-screen connect gate (form left · Hyperspeed brand panel right).
-   Every page is token-gated. */
+   Every page is token-gated.
+
+   Chat is the one destination with contents of its own, so its saved
+   conversations hang underneath it in the sidebar rather than taking a column
+   away from the conversation itself. The topbar is left with nothing but the
+   name of where you are; the answer-language control sits with the other
+   session settings at the foot of the sidebar. */
 
 import {
   ArrowRight,
@@ -19,7 +25,6 @@ import {
   Gauge,
   Settings2,
   ShieldCheck,
-  Languages,
   Sun,
   Wrench,
 } from "lucide-react";
@@ -30,6 +35,8 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { LANGUAGE_LABELS, type Language } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useChat } from "@/lib/chat-store";
+import { ChatHistory } from "@/components/chat-history";
 import { BrandLogo, Button, Input, Picker } from "@/components/ui";
 
 const Hyperspeed = dynamic(() => import("@/components/hyperspeed/Hyperspeed"), {
@@ -214,16 +221,20 @@ function ConnectGate() {
 
 /* ---------------- language ---------------- */
 
-/* §2 sells Russian and Tajik as the differentiator, so the choice lives in the
-   topbar rather than buried in settings. It pins the *answer* language; the
-   chrome stays English. */
+/* §2 sells Russian and Tajik as the differentiator, so the choice stays one
+   click away — but it belongs with the other session settings at the foot of
+   the sidebar, not in the topbar of every page. It pins the *answer* language;
+   the chrome stays English. */
 function LanguageSwitcher() {
   const { language, setLanguage } = useAuth();
   return (
-    <div className="flex items-center gap-2">
-      <Languages className="size-4 shrink-0 text-faint" />
+    <div className="hidden lg:block">
+      <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
+        Answer language
+      </p>
       <Picker
         compact
+        dropUp
         value={language}
         onChange={(v) => setLanguage(v as Language)}
         options={(Object.keys(LANGUAGE_LABELS) as Language[]).map((v) => ({
@@ -231,9 +242,26 @@ function LanguageSwitcher() {
           label: LANGUAGE_LABELS[v],
         }))}
         ariaLabel="Answer language"
-        className="min-w-[168px]"
+        className="w-full"
       />
     </div>
+  );
+}
+
+/* ---------------- signature ---------------- */
+
+/* Quiet on purpose — it only comes forward when someone goes looking. */
+function CraftedBy() {
+  return (
+    <a
+      href="https://billsharifzade.github.io/"
+      target="_blank"
+      rel="noreferrer noopener"
+      title="crafted by qwantum"
+      className="mt-3 hidden select-none text-center text-[10px] tracking-[0.08em] text-faint/40 transition-colors duration-500 hover:text-accent lg:block"
+    >
+      crafted by <span className="font-semibold">qwantum</span>
+    </a>
   );
 }
 
@@ -242,6 +270,8 @@ function LanguageSwitcher() {
 export function Shell({ children }: { children: ReactNode }) {
   const { token, ready, disconnect, theme, toggleTheme, me } = useAuth();
   const pathname = usePathname();
+  const chat = useChat();
+  const onChat = pathname === "/";
 
   if (!ready) return null;
   if (!token) return <ConnectGate />;
@@ -273,36 +303,65 @@ export function Shell({ children }: { children: ReactNode }) {
           </span>
         </Link>
 
-        <nav className="flex flex-1 flex-col gap-1.5 p-3.5">
+        <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-3.5">
           {nav.map(({ href, label, icon: Icon }) => {
             const active =
               href === "/" ? pathname === "/" : pathname.startsWith(href);
             return (
-              <Link
-                key={href}
-                href={href}
-                title={label}
-                className={`relative flex items-center justify-center gap-3 rounded-xl px-3.5 py-3 text-[14px] font-semibold transition-colors lg:justify-start ${
-                  active ? "text-accent-strong" : "text-mut hover:text-ink"
-                }`}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="nav-pill"
-                    transition={{ type: "spring", bounce: 0.18, duration: 0.5 }}
-                    className="absolute inset-0 rounded-xl bg-accent-soft"
-                  />
-                )}
-                <Icon className="relative z-10 size-[19px] shrink-0" />
-                <span className="relative z-10 hidden lg:block">{label}</span>
-              </Link>
+              <div key={href} className={onChat && href === "/" ? "contents" : ""}>
+                <Link
+                  href={href}
+                  title={label}
+                  className={`relative flex items-center justify-center gap-3 rounded-xl px-3.5 py-3 text-[14px] font-semibold transition-colors lg:justify-start ${
+                    active ? "text-accent-strong" : "text-mut hover:text-ink"
+                  }`}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="nav-pill"
+                      transition={{ type: "spring", bounce: 0.18, duration: 0.5 }}
+                      className="absolute inset-0 rounded-xl bg-accent-soft"
+                    />
+                  )}
+                  <Icon className="relative z-10 size-[19px] shrink-0" />
+                  <span className="relative z-10 hidden lg:block">{label}</span>
+                </Link>
+
+                {/* Chat's own contents, nested under it and only while you are
+                    there. The rail is icon-only below lg, so the chat page
+                    keeps a drawer for narrow screens. */}
+                <AnimatePresence initial={false}>
+                  {href === "/" && onChat && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
+                      className="hidden overflow-hidden lg:block"
+                    >
+                      <div className="ml-4 max-h-[46vh] border-l border-line pb-2 pl-2.5 pt-1.5">
+                        <ChatHistory
+                          sessions={chat.sessions}
+                          loading={chat.loadingSessions}
+                          activeId={chat.activeId}
+                          onNew={chat.newChat}
+                          onOpen={(id) => void chat.openChat(id)}
+                          onRename={(id, t) => void chat.renameChat(id, t)}
+                          onDelete={(id) => void chat.deleteChat(id)}
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             );
           })}
         </nav>
 
         {/* session controls */}
         <div className="border-t border-line p-3.5">
-          <div className="flex items-center justify-center gap-1 lg:justify-between">
+          <LanguageSwitcher />
+          <div className="mt-2 flex items-center justify-center gap-1 lg:justify-between">
             <button
               onClick={toggleTheme}
               title="Toggle theme"
@@ -322,12 +381,13 @@ export function Shell({ children }: { children: ReactNode }) {
               <LogOut className="size-[18px]" />
             </button>
           </div>
+          <CraftedBy />
         </div>
       </aside>
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass sticky top-0 z-10 flex h-[72px] items-center justify-between gap-4 border-b border-line px-8">
+        <header className="glass sticky top-0 z-10 flex h-[72px] items-center gap-4 border-b border-line px-8">
           <AnimatePresence mode="wait">
             <motion.h2
               key={activeLabel}
@@ -340,7 +400,6 @@ export function Shell({ children }: { children: ReactNode }) {
               {activeLabel}
             </motion.h2>
           </AnimatePresence>
-          <LanguageSwitcher />
         </header>
         <main className="mx-auto w-full max-w-[1520px] flex-1 px-8 py-8">
           {children}

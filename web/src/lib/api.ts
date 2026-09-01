@@ -133,16 +133,28 @@ export interface Connector {
   created_at: number;
 }
 
+/** `sql`/`rest` fetch a number; `agent` is a SKILL.md that teaches a procedure. */
+export type SkillKind = "sql" | "rest" | "agent";
+
+/** A bundled reference file — level 3, read only when the instructions cite it. */
+export interface SkillResource {
+  path: string;
+  content: string;
+}
+
 export interface SkillDefinition {
   id: string;
   tenant_id: string;
   name: string;
   description: string;
-  kind: "sql" | "rest";
+  kind: SkillKind;
   connector_id: string;
   param_schema: Record<string, unknown>;
   sql: string;
   path: string;
+  /** agent kind: the SKILL.md body */
+  instructions: string;
+  resources: SkillResource[];
   required_data_class: DataClass;
   required_roles: string[];
   row_limit: number | null;
@@ -157,11 +169,13 @@ export interface SkillDefinition {
 export interface SkillDefinitionInput {
   name: string;
   description: string;
-  kind: "sql" | "rest";
+  kind: SkillKind;
   connector_id: string;
   param_schema: Record<string, unknown> | null;
   sql: string;
   path: string;
+  instructions: string;
+  resources: SkillResource[];
   required_data_class: DataClass;
   required_roles: string[];
   row_limit: number | null;
@@ -396,12 +410,15 @@ export const api = {
     assistantId?: string,
     attachments?: ChatAttachment[],
     language?: Language,
+    /** lets the composer's stop button abandon an answer that is still coming */
+    signal?: AbortSignal,
   ) =>
     request<Answer>(
       token,
       assistantId ? `/v1/assistants/${assistantId}/ask` : "/v1/ask",
       {
         method: "POST",
+        signal,
         body: JSON.stringify({
           query,
           attachments: attachments ?? [],
@@ -510,11 +527,22 @@ export const api = {
       }),
     library: (token: string) =>
       request<{ skills: SkillDefinition[] }>(token, "/v1/skills/library"),
-    import: (token: string, id: string, connectorId: string, name?: string) =>
+    /** A procedure carries no data path, so it copies without a connector. */
+    import: (token: string, id: string, connectorId = "", name?: string) =>
       request<SkillDefinition>(token, `/v1/skills/library/${id}/import`, {
         method: "POST",
         body: JSON.stringify({ connector_id: connectorId, name: name ?? null }),
       }),
+    /** The stored procedure as a real SKILL.md, portable out of KARAG. */
+    skillMd: (token: string, id: string) =>
+      request<string>(token, `/v1/skills/definitions/${id}/skill_md`),
+    /** Split a pasted SKILL.md into fields. Parses only — stores nothing. */
+    parseSkillMd: (token: string, text: string) =>
+      request<{ name: string; description: string; instructions: string }>(
+        token,
+        "/v1/skills/parse_skill_md",
+        { method: "POST", body: JSON.stringify({ text }) },
+      ),
   },
 
   alerts: {
@@ -649,9 +677,11 @@ export const api = {
       query: string,
       attachments?: ChatAttachment[],
       language?: Language,
+      signal?: AbortSignal,
     ) =>
       request<ChatAskResult>(token, `/v1/chats/${id}/ask`, {
         method: "POST",
+        signal,
         body: JSON.stringify({
           query,
           attachments: attachments ?? [],

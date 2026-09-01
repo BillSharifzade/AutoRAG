@@ -53,16 +53,50 @@ only** — never another company's data.
 
 ## Skills
 
-A skill wraps either SQL on a read-only view or a GET against a company-exposed
-API. It is stored as data, not code: register a data connection, author the
-skill (name, description, parameters, the query, required data class and roles),
-test it, and it becomes a live tool immediately and after restart. Guardrails
-are inherited from the connector: SELECT/WITH only, single statement, row limits,
-statement timeouts, bound parameters. `:tenant_id` is bound by the platform, so
-a skill can never read another tenant's rows.
+A skill is stored as data, not code, and comes in two shapes.
 
-Skills marked *shared* form a group library: another company copies the query
-and binds its **own** connection — the query travels, the data path never does.
+**Lookups** answer *what the number is*. One wraps either SQL on a read-only
+view or a GET against a company-exposed API. Register a data connection, author
+the skill (name, description, parameters, the query, required data class and
+roles), test it, and it becomes a live tool immediately and after restart.
+Guardrails are inherited from the connector: SELECT/WITH only, single statement,
+row limits, statement timeouts, bound parameters. `:tenant_id` is bound by the
+platform, so a lookup can never read another tenant's rows.
+
+**Procedures** answer *how we do this here* — the company's own written method
+for a recurring task. They are Anthropic Agent Skills: a `SKILL.md` with a
+hyphen-case name, a description saying what it does *and when to use it*, a
+markdown body of instructions, and optional bundled reference files. They are
+disclosed progressively, so holding many costs almost nothing:
+
+1. only name and description are ever pre-loaded — that is what the assistant
+   matches a request against;
+2. the instructions arrive when the assistant opens the skill;
+3. a bundled file arrives only when the instructions point at it.
+
+A procedure reaches no data source and needs no connection: it grants no access,
+and it is visible under exactly the same roles-and-classes rules as everything
+else. It exports as a real `SKILL.md`, so it also loads in Claude Code or
+claude.ai.
+
+Skills marked *shared* form a group library: another company copies a lookup and
+binds its **own** connection — the query travels, the data path never does. A
+procedure is pure text, so it copies whole.
+
+## The open internet
+
+Off unless the deployment configures a search provider. When it is on, two more
+skills appear: `search_web` finds pages, `read_web_page` reads one. Every result
+and page comes back with a citation marker (`[W1]`, `[W2]` — a separate series
+from the documents' `[1]`, `[2]`) and the source appears under the answer as a
+link, so an internet claim is as checkable as a company one.
+
+Outbound requests are policed before they leave: http(s) only, every hostname
+resolved and refused if it points at a private, loopback or link-local address
+(which is where cloud credential endpoints live), every redirect re-checked,
+optional allow/deny host lists, a size cap, and text formats only. Web content
+is the least trustworthy input the platform takes — it is marked untrusted, so a
+turn that read a page can never result in a change to KARAG's own code.
 
 ## The rest
 
@@ -125,9 +159,9 @@ shows you the query behind every number so you can.""",
 language across documents and get drafts with citations.""",
     "skill_author": """\
 **You are the technical side of the data plane.** You can register read-only
-data connections and author skills on them.
+data connections and author both kinds of skill on them.
 
-**How to add a skill:**
+**How to add a lookup (a live number):**
 1. Register a connection (SQLite path, Postgres DSN, or a REST base URL). Put
    secrets in the server environment and reference them as `env:NAME` — only
    the pointer is stored.
@@ -139,7 +173,16 @@ data connections and author skills on them.
    cleared to read yourself.
 
 Write statements, stacked statements and open parameter schemas are rejected
-when you save, not when a manager asks a question.""",
+when you save, not when a manager asks a question.
+
+**How to add a procedure (how a task is done):** no connection is involved.
+Give it a hyphen-case name, a description that says both what it does and when
+to use it — that description is the only thing the assistant sees before
+deciding to open the skill, so be specific and write it in the third person —
+then the instructions themselves. Move long reference material into bundled
+files and point at them from the instructions; they cost nothing until they are
+read. You can paste an existing `SKILL.md` straight in, and export one back
+out.""",
     "admin": """\
 **You run your company's tenant.** You can do everything above that your
 clearances allow, plus:

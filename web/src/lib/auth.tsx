@@ -38,7 +38,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [language, setLanguageState] = useState<Language>("auto");
 
+  /* localStorage does not exist while this renders on the server, so the token
+     and theme cannot be seeded from it — the first client render has to match
+     the server's or hydration breaks. Reading it here and correcting state is
+     the intended pattern, and `ready` exists precisely to let the shell wait
+     for it; the one extra render is the point, not an accident. */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setToken(localStorage.getItem("karag_token") ?? "");
     const stored = localStorage.getItem("karag_theme");
     const system = window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -63,17 +69,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Identity drives which admin surfaces appear and which language is used.
   useEffect(() => {
-    if (!token) {
-      setMe(null);
-      return;
-    }
-    api
-      .me(token)
-      .then((m) => {
-        setMe(m);
-        setLanguageState(m.language);
-      })
-      .catch(() => setMe(null));
+    // Signing out has to clear `me` too, but going through the promise keeps
+    // that off the effect's synchronous path — and the guard below stops a
+    // slow lookup for the previous token from overwriting the current one.
+    let live = true;
+    const lookup = token ? api.me(token).catch(() => null) : Promise.resolve(null);
+    void lookup.then((m) => {
+      if (!live) return;
+      setMe(m);
+      if (m) setLanguageState(m.language);
+    });
+    return () => {
+      live = false;
+    };
   }, [token]);
 
   const connect = useCallback((t: string) => {

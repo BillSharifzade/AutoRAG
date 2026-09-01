@@ -62,6 +62,30 @@ def untrusted_sources() -> tuple[str, ...]:
     return tuple(_ctx.get().get("untrusted_sources", ()))
 
 
+def reset_source_markers() -> None:
+    """Start a fresh citation numbering for this turn."""
+    ctx = dict(_ctx.get())
+    ctx["source_marker"] = 0
+    _ctx.set(ctx)
+
+
+def next_source_marker(prefix: str = "W") -> str:
+    """The next citation marker for a source a *skill* brought in.
+
+    Retrieved documents are numbered ``[1]``, ``[2]``… by the orchestrator
+    before the model sees them. A skill that fetches its own sources cannot
+    know how many of those there were, so it numbers into a separate series —
+    ``[W1]``, ``[W2]`` — which can never collide and still reads as a citation.
+    Per-request, because the counter lives in the same contextvar as the rest
+    of the turn's state.
+    """
+    ctx = dict(_ctx.get())
+    n = int(ctx.get("source_marker", 0)) + 1
+    ctx["source_marker"] = n
+    _ctx.set(ctx)
+    return f"[{prefix}{n}]"
+
+
 def enrich_event(event: "AuditEvent") -> "AuditEvent":
     """Fill an event's device/role fields from the active request, if unset."""
     ctx = _ctx.get()

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import { ChatProvider } from "@/lib/chat-store";
 import { Shell } from "@/components/shell";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
@@ -44,7 +45,11 @@ export default function RootLayout({
       </head>
       <body className="app-wash min-h-full">
         <AuthProvider>
-          <Shell>{children}</Shell>
+          {/* Above the router on purpose: the open conversation has to outlive
+              a trip to Documents and back. */}
+          <ChatProvider>
+            <Shell>{children}</Shell>
+          </ChatProvider>
         </AuthProvider>
       </body>
     </html>

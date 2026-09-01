@@ -63,6 +63,9 @@ from .tenants import (
 )
 from .usage import SqliteUsageRecorder, UsageRecorder
 from .vectorstore.base import VectorStore
+from .web.base import PageFetcher, WebSearcher
+from .web.guard import WebPolicy
+from .web.skills import web_skills
 
 
 def _build_single_generator(s: Settings, name: str) -> Generator:
@@ -195,6 +198,69 @@ def build_engineer_generator(s: Settings) -> Generator | None:
     return AnthropicGenerator(model=s.engineer_model, api_key=s.anthropic_api_key)
 
 
+def build_web_policy(s: Settings) -> "WebPolicy":
+    """Where this deployment may go on the open internet."""
+    from .web.guard import WebPolicy
+
+    def hosts(raw: str) -> tuple[str, ...]:
+        return tuple(h.strip().lower() for h in raw.split(",") if h.strip())
+
+    return WebPolicy(
+        allow_hosts=hosts(s.web_allow_hosts),
+        deny_hosts=hosts(s.web_deny_hosts),
+    )
+
+
+def build_web_searcher(s: Settings) -> "WebSearcher | None":
+    """The configured search provider, or ``None`` when the web is switched off.
+
+    ``None`` is not a degraded mode: the skills simply are not registered, so
+    the model is never offered a tool it cannot use.
+    """
+    name = (s.web_search or "none").lower()
+    if name in ("", "none", "off"):
+        return None
+    if name == "fake":
+        from .web.base import FakeSearcher
+
+        return FakeSearcher()
+    if name == "brave":
+        from .web.search import BraveSearcher
+
+        return BraveSearcher(s.brave_api_key or "")
+    if name == "tavily":
+        from .web.search import TavilySearcher
+
+        return TavilySearcher(s.tavily_api_key or "")
+    if name == "serper":
+        from .web.search import SerperSearcher
+
+        return SerperSearcher(s.serper_api_key or "")
+    raise ConfigError(f"unknown web_search provider: {s.web_search}")
+
+
+def build_page_fetcher(s: Settings) -> "PageFetcher | None":
+    """Reading one page, which is useful with or without a search provider.
+
+    ``auto`` follows search, so turning the web on turns both on. Setting it
+    explicitly covers the two lopsided cases: reading links the user pastes
+    without paying for search, and searching without letting the assistant open
+    what it finds.
+    """
+    mode = (s.web_fetch or "auto").lower()
+    searching = (s.web_search or "none").lower() not in ("", "none", "off")
+    enabled = searching if mode in ("auto", "") else mode not in ("0", "false", "off")
+    if not enabled:
+        return None
+    if (s.web_search or "").lower() == "fake":
+        from .web.base import FakeFetcher
+
+        return FakeFetcher()
+    from .web.fetch import HttpPageFetcher
+
+    return HttpPageFetcher(build_web_policy(s))
+
+
 def build_alert_store(s: Settings) -> AlertRuleStore:
     if s.app_store == "memory":
         return InMemoryAlertRuleStore()
@@ -309,6 +375,13 @@ def build_platform(
     if s.engineer_enabled:
         for skill in engineer_skills(code_changes):
             reg.register(skill)
+
+    # --- the open internet, if this deployment allows it ---------------------
+    web_roles = frozenset(r.strip() for r in s.web_roles.split(",") if r.strip())
+    for skill in web_skills(
+        build_web_searcher(s), build_page_fetcher(s), required_roles=web_roles
+    ):
+        reg.register(skill)
 
     platform = Platform(
         settings=s,

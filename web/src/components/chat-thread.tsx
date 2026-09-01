@@ -1,9 +1,14 @@
 "use client";
 
-/* Chat — classic AI-chat interface: centered hero + composer when empty,
-   plain markdown answers with a hover action row, user bubbles on the right,
-   auto-growing composer with assistant picker, image/file attachments and
-   voice recording, and full provenance rendering. */
+/* The conversation surface: centered hero + composer when empty, plain
+   markdown answers with a hover action row, user bubbles on the right, an
+   auto-growing composer with assistant picker, image/file/voice attachments,
+   and full provenance rendering.
+
+   The thread holds no conversation state of its own — it renders a ChatEngine
+   and calls back into it. That is what lets the main chat's engine live in the
+   app shell and survive navigation, while the assistants page spins up a
+   throwaway one for its preview. */
 
 import {
   ArrowUp,
@@ -14,8 +19,10 @@ import {
   Copy,
   Database,
   Download,
+  ExternalLink,
   FileSpreadsheet,
   FileText,
+  Globe,
   Mic,
   Paperclip,
   ShieldAlert,
@@ -27,6 +34,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -41,51 +49,13 @@ import {
   downloadArtifact,
   toBase64,
   type Answer,
-  type ApiError,
   type Assistant,
   type ChatAttachment,
-  type StoredChatMessage,
+  type Citation,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useChatEngine, type Att, type ChatEngine, type Turn } from "@/lib/chat-store";
 import { BrandLogo, Button, Chip, Picker, TypingDots } from "@/components/ui";
-
-interface Att extends ChatAttachment {
-  id: string;
-  preview?: string; // object URL for image thumbnails
-  label?: string; // pretty label (e.g. voice length)
-}
-
-export interface Turn {
-  role: "you" | "karag";
-  text: string;
-  answer?: Answer;
-  error?: boolean;
-  attachments?: Att[];
-}
-
-/** Map persisted chat messages back into renderable turns. */
-export function historyToTurns(messages: StoredChatMessage[]): Turn[] {
-  return messages.map((m) =>
-    m.role === "user"
-      ? {
-          role: "you" as const,
-          text: m.text,
-          attachments: (m.attachments ?? []).map((a, i) => ({
-            id: `${i}`,
-            kind: a.kind,
-            filename: a.filename,
-            media_type: "",
-            data_b64: "",
-            label: a.kind === "audio" ? "Voice note" : undefined,
-          })),
-        }
-      : {
-          role: "karag" as const,
-          text: m.text || "(no answer)",
-          answer: m.answer ?? undefined,
-        },
-  );
-}
 
 const PLANE_META = {
   knowledge: { icon: BookOpenText, label: "knowledge" },
@@ -94,26 +64,29 @@ const PLANE_META = {
   refusal: { icon: ShieldAlert, label: "refused" },
 } as const;
 
+/* Four openers, one per thing the assistant can actually do — look something
+   up in a document, fetch a live figure, build a file, and answer from a
+   restricted class. Written as the question a person would say out loud. */
 const SUGGESTIONS = [
   {
     icon: BookOpenText,
-    label: "Return policy",
-    query: "What is the return window for unopened goods?",
+    label: "Check a rule",
+    query: "How long do customers have to return something unopened?",
   },
   {
     icon: TrendingUp,
-    label: "Live sales figure",
-    query: "What were sales for store 5 on 2026-07-20?",
+    label: "Get today's number",
+    query: "What did store 5 sell on 31 July?",
   },
   {
     icon: FileSpreadsheet,
-    label: "Excel report",
-    query: "Generate a sales report for store 5 as xlsx",
+    label: "Make a spreadsheet",
+    query: "Put store 5's recent sales into an Excel file I can download",
   },
   {
     icon: Database,
-    label: "Q2 financials",
-    query: "What was Q2 revenue and net profit?",
+    label: "Look up a figure",
+    query: "What was our Q2 revenue and net profit?",
   },
 ];
 
@@ -127,6 +100,14 @@ function Markdown({ text }: { text: string }) {
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
     </div>
   );
+}
+
+/* Half-written markdown renders badly for one frame — an unclosed fence turns
+   the rest of the answer into a code block that then snaps back. Closing it as
+   we go keeps the reveal steady. */
+function balanceFences(text: string): string {
+  const fences = (text.match(/^```/gm) ?? []).length;
+  return fences % 2 === 1 ? `${text}\n\`\`\`` : text;
 }
 
 function PlaneBadge({ plane }: { plane: Answer["plane"] }) {
@@ -205,6 +186,33 @@ function AttachmentChips({
   );
 }
 
+/* A source the assistant read on the internet. It is a link on purpose: the
+   whole promise of citing the web is that the reader can go and check it, and
+   a page can change after it was quoted. The domain is shown because that is
+   what tells someone whether to believe it. */
+function WebSource({ c }: { c: Citation }) {
+  let host = "";
+  try {
+    host = new URL(c.source_uri ?? "").hostname.replace(/^www\./, "");
+  } catch {
+    host = "";
+  }
+  return (
+    <a
+      href={c.source_uri ?? "#"}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={c.snippet}
+      className="inline-flex max-w-[22rem] items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-0.5 text-[11.5px] font-medium text-mut transition-colors hover:border-accent/50 hover:text-accent-strong"
+    >
+      <Globe className="size-3 shrink-0 text-accent" />
+      <span className="truncate">{c.title}</span>
+      {host && <span className="shrink-0 text-faint">{host}</span>}
+      <ExternalLink className="size-2.5 shrink-0 text-faint" />
+    </a>
+  );
+}
+
 function AnswerExtras({ answer }: { answer: Answer }) {
   const hasMeta =
     answer.citations.length > 0 ||
@@ -212,8 +220,19 @@ function AnswerExtras({ answer }: { answer: Answer }) {
     answer.queries_shown.length > 0 ||
     answer.artifacts.length > 0;
   if (!hasMeta) return null;
+
+  /* Documents and web pages are both sources, but they are not equally
+     trustworthy and the screen should not imply they are. */
+  const docs = answer.citations.filter((c) => c.document_id !== "web");
+  const web = answer.citations.filter((c) => c.document_id === "web");
+
   return (
-    <div className="mt-3 flex flex-col gap-2.5">
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="mt-3 flex flex-col gap-2.5"
+    >
       <div className="flex flex-wrap items-center gap-1.5">
         <PlaneBadge plane={answer.plane} />
         {answer.skills_used.map((s) => (
@@ -221,18 +240,30 @@ function AnswerExtras({ answer }: { answer: Answer }) {
             <Wrench className="size-3" /> {s}
           </Chip>
         ))}
-        {[...new Map(answer.citations.map((c) => [c.title, c])).values()].map(
-          (c) => (
-            <span
-              key={c.chunk_id}
-              title={c.snippet}
-              className="inline-flex cursor-help items-center gap-1 rounded-md border border-line bg-surface px-2 py-0.5 text-[11.5px] font-medium text-mut"
-            >
-              <BookOpenText className="size-3" /> {c.title}
-            </span>
-          ),
-        )}
+        {[...new Map(docs.map((c) => [c.title, c])).values()].map((c) => (
+          <span
+            key={c.chunk_id}
+            title={c.snippet}
+            className="inline-flex cursor-help items-center gap-1 rounded-md border border-line bg-surface px-2 py-0.5 text-[11.5px] font-medium text-mut"
+          >
+            <BookOpenText className="size-3" /> {c.title}
+          </span>
+        ))}
       </div>
+
+      {web.length > 0 && (
+        <div>
+          <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-faint">
+            <Globe className="size-3" />
+            From the web — check anything that matters
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[...new Map(web.map((c) => [c.source_uri, c])).values()].map((c) => (
+              <WebSource key={c.chunk_id} c={c} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {answer.queries_shown.length > 0 && (
         <details className="group">
@@ -285,7 +316,7 @@ function AnswerExtras({ answer }: { answer: Answer }) {
           </motion.button>
         );
       })}
-    </div>
+    </motion.div>
   );
 }
 
@@ -307,6 +338,7 @@ function Composer({
   input,
   setInput,
   onSend,
+  onStop,
   busy,
   placeholder,
   picker,
@@ -322,6 +354,7 @@ function Composer({
   input: string;
   setInput: (v: string) => void;
   onSend: () => void;
+  onStop: () => void;
   busy: boolean;
   placeholder: string;
   picker?: ReactNode;
@@ -348,13 +381,14 @@ function Composer({
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      onSend();
+      if (!busy) onSend();
     }
   }
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    onSend();
+    if (busy) onStop();
+    else onSend();
   }
 
   const canSend =
@@ -426,14 +460,43 @@ function Composer({
             )}
             {picker}
           </div>
+
+          {/* One control, two jobs: send, or stop what is already running. */}
           <motion.button
             type="submit"
             whileTap={{ scale: 0.88 }}
-            disabled={!canSend}
-            aria-label="Send"
-            className="red-gradient grid size-9 shrink-0 cursor-pointer place-items-center rounded-full text-white shadow-[0_2px_12px_-2px_rgb(236_35_54/0.5)] transition-opacity disabled:opacity-35"
+            disabled={!busy && !canSend}
+            aria-label={busy ? "Stop generating" : "Send"}
+            title={busy ? "Stop" : "Send"}
+            className={`grid size-9 shrink-0 cursor-pointer place-items-center rounded-full transition-[opacity,background] disabled:opacity-35 ${
+              busy
+                ? "bg-ink text-bg"
+                : "red-gradient text-white shadow-[0_2px_12px_-2px_rgb(236_35_54/0.5)]"
+            }`}
           >
-            <ArrowUp className="size-4.5" />
+            <AnimatePresence mode="wait" initial={false}>
+              {busy ? (
+                <motion.span
+                  key="stop"
+                  initial={{ scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.6, opacity: 0 }}
+                  transition={{ duration: 0.12 }}
+                >
+                  <Square className="size-3 fill-current" />
+                </motion.span>
+              ) : (
+                <motion.span
+                  key="send"
+                  initial={{ scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.6, opacity: 0 }}
+                  transition={{ duration: 0.12 }}
+                >
+                  <ArrowUp className="size-4.5" />
+                </motion.span>
+              )}
+            </AnimatePresence>
           </motion.button>
         </div>
       </div>
@@ -526,35 +589,52 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
   );
 }
 
+/* ---------- one answer, as it writes itself ---------- */
+
+function AssistantTurn({ turn }: { turn: Turn }) {
+  const writing = turn.shown !== undefined;
+  const body = writing ? turn.text.slice(0, turn.shown) : turn.text;
+  return (
+    <div className="group">
+      <Markdown text={writing ? balanceFences(body) : body} />
+      {writing && (
+        <span
+          aria-hidden
+          className="caret -mt-4 ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] rounded-full bg-accent align-middle"
+        />
+      )}
+      {/* Citations and downloads land once the words have finished, so the
+          answer doesn't jump around while it is being read. */}
+      {!writing && turn.answer && <AnswerExtras answer={turn.answer} />}
+      {!writing && (
+        <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <CopyButton text={turn.text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- thread ---------- */
 
 export function ChatThread({
+  engine,
   assistantId,
   assistants,
   onAssistantChange,
   placeholder = "Ask, attach a file, or record a voice note…",
   compact = false,
-  initialTurns,
-  onSendMessage,
 }: {
+  engine: ChatEngine;
   assistantId?: string;
-  /** when provided (with onAssistantChange), an assistant picker is shown in the composer */
+  /** when provided (with onAssistantChange), an assistant picker is shown */
   assistants?: Assistant[];
   onAssistantChange?: (id: string) => void;
   placeholder?: string;
   compact?: boolean;
-  /** seed the thread from persisted history (read once, at mount) */
-  initialTurns?: Turn[];
-  /** when provided, the parent owns sending + persistence and returns the Answer */
-  onSendMessage?: (
-    query: string,
-    attachments: ChatAttachment[],
-  ) => Promise<Answer>;
 }) {
-  const { token, language } = useAuth();
-  const [turns, setTurns] = useState<Turn[]>(() => initialTurns ?? []);
+  const { turns, busy, send, stop } = engine;
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [atts, setAtts] = useState<Att[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
@@ -563,7 +643,10 @@ export function ChatThread({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recSecsRef = useRef(0);
 
+  // `turns` changes on every reveal frame, so this keeps the newest line in
+  // view as the answer grows rather than only when it finishes.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [turns, busy]);
@@ -576,10 +659,21 @@ export function ChatThread({
     [],
   );
 
-  function flash(msg: string) {
+  const flash = useCallback((msg: string) => {
     setNotice(msg);
     setTimeout(() => setNotice(null), 4000);
-  }
+  }, []);
+
+  const submit = useCallback(
+    (text?: string) => {
+      const query = text ?? input;
+      if (!query.trim() && atts.length === 0) return;
+      send(query, atts);
+      setInput("");
+      setAtts([]);
+    },
+    [input, atts, send],
+  );
 
   async function addFiles(files: FileList | null) {
     if (!files) return;
@@ -668,48 +762,6 @@ export function ChatThread({
       flash("Microphone access was denied");
     }
   }
-  const recSecsRef = useRef(0);
-
-  async function send(text?: string) {
-    const query = (text ?? input).trim();
-    const sending = atts;
-    if ((!query && sending.length === 0) || busy) return;
-    setInput("");
-    setAtts([]);
-    setTurns((t) => [
-      ...t,
-      {
-        role: "you",
-        text: query,
-        attachments: sending.length ? sending : undefined,
-      },
-    ]);
-    setBusy(true);
-    try {
-      const payload: ChatAttachment[] = sending.map(
-        ({ kind, filename, media_type, data_b64 }) => ({
-          kind,
-          filename,
-          media_type,
-          data_b64,
-        }),
-      );
-      const answer = onSendMessage
-        ? await onSendMessage(query, payload)
-        : await api.ask(token, query, assistantId, payload, language);
-      setTurns((t) => [
-        ...t,
-        { role: "karag", text: answer.text || "(no answer)", answer },
-      ]);
-    } catch (e) {
-      setTurns((t) => [
-        ...t,
-        { role: "karag", text: (e as ApiError).message, error: true },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const picker =
     assistants && onAssistantChange ? (
@@ -729,14 +781,14 @@ export function ChatThread({
   const composerProps = {
     input,
     setInput,
-    onSend: () => void send(),
+    onSend: () => submit(),
+    onStop: stop,
     busy,
     placeholder,
     picker,
     atts,
     onAddFiles: (f: FileList | null) => void addFiles(f),
-    onRemoveAtt: (id: string) =>
-      setAtts((a) => a.filter((x) => x.id !== id)),
+    onRemoveAtt: (id: string) => setAtts((a) => a.filter((x) => x.id !== id)),
     recording,
     recSecs,
     onToggleRec: () => void toggleRecording(),
@@ -744,6 +796,8 @@ export function ChatThread({
   };
 
   const empty = turns.length === 0 && !busy;
+  /* the model is working, but nothing has come back to show yet */
+  const thinking = busy && turns.at(-1)?.role !== "karag";
 
   /* -- empty: centered hero with the composer in the middle (Claude-style) -- */
   if (empty && !compact) {
@@ -773,7 +827,7 @@ export function ChatThread({
             </div>
           </div>
 
-          <OnboardingTip onAsk={(q) => void send(q)} />
+          <OnboardingTip onAsk={(q) => submit(q)} />
 
           <Composer {...composerProps} autoFocus />
 
@@ -786,7 +840,7 @@ export function ChatThread({
                 transition={{ delay: 0.2 + i * 0.06, duration: 0.4 }}
                 whileHover={{ y: -1 }}
                 whileTap={{ scale: 0.96 }}
-                onClick={() => void send(query)}
+                onClick={() => submit(query)}
                 className="flex cursor-pointer items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-2 text-[13px] font-medium text-mut transition-colors hover:border-accent/50 hover:text-ink"
               >
                 <Icon className="size-3.5 text-accent" /> {label}
@@ -835,18 +889,12 @@ export function ChatThread({
                     {t.text}
                   </div>
                 ) : (
-                  <div className="group">
-                    <Markdown text={t.text} />
-                    {t.answer && <AnswerExtras answer={t.answer} />}
-                    <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                      <CopyButton text={t.text} />
-                    </div>
-                  </div>
+                  <AssistantTurn turn={t} />
                 )}
               </motion.div>
             ))}
           </AnimatePresence>
-          {busy && (
+          {thinking && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -870,4 +918,23 @@ export function ChatThread({
       </div>
     </div>
   );
+}
+
+/* A thread that owns its own short-lived engine — the assistants page's
+   preview, which is deliberately not part of anyone's saved history. */
+export function PreviewThread({
+  assistantId,
+  placeholder,
+}: {
+  assistantId: string;
+  placeholder?: string;
+}) {
+  const { token, language } = useAuth();
+  const send = useCallback(
+    (query: string, attachments: ChatAttachment[], signal: AbortSignal) =>
+      api.ask(token, query, assistantId, attachments, language, signal),
+    [token, assistantId, language],
+  );
+  const engine = useChatEngine(send);
+  return <ChatThread engine={engine} compact placeholder={placeholder} />;
 }

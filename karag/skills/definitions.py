@@ -7,16 +7,22 @@ editing Python and redeploying — so a skill is stored as a
 :class:`SkillDefinition` row and materialised into a live
 :class:`~karag.skills.base.Skill` at boot (and on every change).
 
-Two shapes, matching §6's two connection methods:
+Three shapes. Two are *lookups*, matching §6's two connection methods; the
+third is a *procedure*, in Anthropic's Agent Skill format:
 
-* ``kind="sql"``  — a parameterised ``SELECT``/``WITH`` on a view, executed
+* ``kind="sql"``   — a parameterised ``SELECT``/``WITH`` on a view, executed
   through :class:`~karag.connectors.sql.SqlConnector` (read-only, row-limited,
   timed out).
-* ``kind="rest"`` — a GET against a company-exposed endpoint.
+* ``kind="rest"``  — a GET against a company-exposed endpoint.
+* ``kind="agent"`` — a ``SKILL.md``: name + description as metadata, a markdown
+  body of instructions, and optional bundled reference files. It fetches
+  nothing and needs no connector; it teaches the assistant how the company does
+  something. See :mod:`karag.skills.agent_skill`.
 
 Definitions are validated at write time (read-only SQL, sane JSON schema,
-declared parameters actually bound), so a broken skill is rejected when it is
-created rather than when a manager asks a question.
+declared parameters actually bound; hyphen-case name and a non-empty
+description within the published limits for an agent skill), so a broken skill
+is rejected when it is created rather than when a manager asks a question.
 """
 
 from __future__ import annotations
@@ -32,10 +38,14 @@ from typing import Protocol
 from ..connectors.sql import ReadOnlyViolation, assert_read_only
 from ..domain import DataClass, new_id
 from ..errors import NotFoundError, ValidationError
+from .agent_skill import SkillResource, validate_agent_skill
 
 SQL = "sql"
 REST = "rest"
-KINDS = (SQL, REST)
+AGENT = "agent"
+KINDS = (SQL, REST, AGENT)
+# The kinds that reach a company data source, and so require a connector.
+CONNECTOR_KINDS = (SQL, REST)
 
 # Named placeholders in a parameterised statement. SQLite uses ``:name``;
 # psycopg uses ``%(name)s`` — a definition may target either backend, so both
@@ -60,13 +70,16 @@ class SkillDefinition:
     tenant_id: str
     name: str
     description: str
-    kind: str  # sql | rest
+    kind: str  # sql | rest | agent
     connector_id: str
     param_schema: dict = field(default_factory=dict)
     # sql kind
     sql: str = ""
     # rest kind
     path: str = ""
+    # agent kind — the SKILL.md body (level 2) and its bundled files (level 3)
+    instructions: str = ""
+    resources: tuple[SkillResource, ...] = ()
     required_data_class: DataClass = DataClass.OPERATIONAL
     required_roles: tuple[str, ...] = ()
     row_limit: int | None = None
@@ -91,6 +104,8 @@ class SkillDefinition:
             "param_schema": self.param_schema,
             "sql": self.sql,
             "path": self.path,
+            "instructions": self.instructions,
+            "resources": [r.to_dict() for r in self.resources],
             "required_data_class": self.required_data_class.value,
             "required_roles": list(self.required_roles),
             "row_limit": self.row_limit,
@@ -141,14 +156,27 @@ def sql_bindings(sql: str) -> set[str]:
 
 def validate_definition(defn: SkillDefinition) -> None:
     """Full pre-store validation — fail loudly at authoring time, not at ask time."""
+    if defn.kind not in KINDS:
+        raise ValidationError(f"unknown skill kind {defn.kind!r}; expected one of {KINDS}")
+
+    if defn.kind == AGENT:
+        # An agent skill is a SKILL.md, so it answers to the published format's
+        # rules rather than to the lookup rules: hyphen-case name, a description
+        # inside the metadata budget, a body, and well-formed bundled paths.
+        validate_agent_skill(
+            name=defn.name,
+            description=defn.description,
+            instructions=defn.instructions,
+            resources=tuple(defn.resources),
+        )
+        return
+
     if not defn.name or not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", defn.name):
         raise ValidationError(
             "skill name must be snake_case, 3–64 chars, starting with a letter"
         )
     if not defn.description.strip():
         raise ValidationError("a skill needs a description — the model selects on it")
-    if defn.kind not in KINDS:
-        raise ValidationError(f"unknown skill kind {defn.kind!r}; expected one of {KINDS}")
     if not defn.connector_id:
         raise ValidationError("a skill must reference a connector")
     validate_param_schema(defn.param_schema)
@@ -188,10 +216,12 @@ def new_definition(
     name: str,
     description: str,
     kind: str,
-    connector_id: str,
+    connector_id: str = "",
     param_schema: dict | None = None,
     sql: str = "",
     path: str = "",
+    instructions: str = "",
+    resources: tuple[SkillResource, ...] = (),
     required_data_class: DataClass = DataClass.OPERATIONAL,
     required_roles: tuple[str, ...] = (),
     row_limit: int | None = None,
@@ -213,6 +243,8 @@ def new_definition(
         },
         sql=sql,
         path=path,
+        instructions=instructions,
+        resources=tuple(resources),
         required_data_class=required_data_class,
         required_roles=tuple(required_roles),
         row_limit=row_limit,
@@ -284,6 +316,8 @@ CREATE TABLE IF NOT EXISTS skill_definitions (
     param_schema       TEXT NOT NULL,
     sql                TEXT NOT NULL DEFAULT '',
     path               TEXT NOT NULL DEFAULT '',
+    instructions       TEXT NOT NULL DEFAULT '',
+    resources          TEXT NOT NULL DEFAULT '[]',
     required_data_class TEXT NOT NULL,
     required_roles     TEXT NOT NULL DEFAULT '[]',
     row_limit          INTEGER,
@@ -309,6 +343,27 @@ class SqliteSkillDefinitionStore:
         self._lock = threading.Lock()
         with self._conn:
             self._conn.executescript(_SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns a database created by an earlier version is missing.
+
+        Agent skills arrived after the table did, and ``CREATE TABLE IF NOT
+        EXISTS`` will not widen an existing one — so an upgrade in place would
+        otherwise fail on the first insert.
+        """
+        have = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(skill_definitions)")
+        }
+        for column, ddl in (
+            ("instructions", "TEXT NOT NULL DEFAULT ''"),
+            ("resources", "TEXT NOT NULL DEFAULT '[]'"),
+        ):
+            if column not in have:
+                self._conn.execute(
+                    f"ALTER TABLE skill_definitions ADD COLUMN {column} {ddl}"
+                )
 
     def create(self, defn: SkillDefinition) -> SkillDefinition:
         with self._lock, self._conn:
@@ -325,13 +380,14 @@ class SqliteSkillDefinitionStore:
         with self._lock, self._conn:
             self._conn.execute(
                 "UPDATE skill_definitions SET name=?, description=?, kind=?,"
-                " connector_id=?, param_schema=?, sql=?, path=?,"
-                " required_data_class=?, required_roles=?, row_limit=?,"
+                " connector_id=?, param_schema=?, sql=?, path=?, instructions=?,"
+                " resources=?, required_data_class=?, required_roles=?, row_limit=?,"
                 " inject_tenant=?, enabled=?, shared=?, updated_at=?"
                 " WHERE id=? AND tenant_id=?",
                 (
                     defn.name, defn.description, defn.kind, defn.connector_id,
                     json.dumps(defn.param_schema), defn.sql, defn.path,
+                    defn.instructions, json.dumps([r.to_dict() for r in defn.resources]),
                     defn.required_data_class.value, json.dumps(list(defn.required_roles)),
                     defn.row_limit, int(defn.inject_tenant), int(defn.enabled),
                     int(defn.shared), defn.updated_at, defn.id, defn.tenant_id,
@@ -380,16 +436,18 @@ class SqliteSkillDefinitionStore:
 
 _INSERT = (
     "INSERT INTO skill_definitions (id, tenant_id, name, description, kind,"
-    " connector_id, param_schema, sql, path, required_data_class, required_roles,"
+    " connector_id, param_schema, sql, path, instructions, resources,"
+    " required_data_class, required_roles,"
     " row_limit, inject_tenant, enabled, shared, created_by, created_at, updated_at)"
-    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 )
 
 
 def _params(d: SkillDefinition) -> tuple:
     return (
         d.id, d.tenant_id, d.name, d.description, d.kind, d.connector_id,
-        json.dumps(d.param_schema), d.sql, d.path, d.required_data_class.value,
+        json.dumps(d.param_schema), d.sql, d.path, d.instructions,
+        json.dumps([r.to_dict() for r in d.resources]), d.required_data_class.value,
         json.dumps(list(d.required_roles)), d.row_limit, int(d.inject_tenant),
         int(d.enabled), int(d.shared), d.created_by, d.created_at, d.updated_at,
     )
@@ -406,6 +464,10 @@ def _row_to_defn(row: sqlite3.Row) -> SkillDefinition:
         param_schema=json.loads(row["param_schema"]),
         sql=row["sql"],
         path=row["path"],
+        instructions=row["instructions"],
+        resources=tuple(
+            SkillResource.from_dict(r) for r in json.loads(row["resources"] or "[]")
+        ),
         required_data_class=DataClass(row["required_data_class"]),
         required_roles=tuple(json.loads(row["required_roles"])),
         row_limit=row["row_limit"],

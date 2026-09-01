@@ -26,6 +26,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type ApiError, type UsageEvent, type UsageTotals } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useLoad } from "@/lib/use-load";
 import { Button, Card, CardHeader, EmptyState, Rise } from "@/components/ui";
 import { UsageSkeleton } from "@/components/skeleton";
 
@@ -578,8 +579,6 @@ export default function UsagePage() {
   const rangeLabel = RANGES.find((r) => r.key === range)?.label ?? "";
 
   const load = useCallback(async () => {
-    setBusy(true);
-    setError(null);
     try {
       // minimum spinner time so a fast fetch doesn't flicker
       const [u] = await Promise.all([
@@ -587,6 +586,7 @@ export default function UsagePage() {
         new Promise((r) => setTimeout(r, 450)),
       ]);
       setUsage(u);
+      setError(null);
       setTick((t) => t + 1);
     } catch (e) {
       setError((e as ApiError).message);
@@ -595,9 +595,15 @@ export default function UsagePage() {
     }
   }, [token]);
 
-  useEffect(() => {
+  /* The spinner belongs to the refresh button. The first load is covered by the
+     full-page skeleton, and raising the flag there would mean a setState inside
+     the mount effect for a state nothing is showing yet. */
+  const refresh = useCallback(() => {
+    setBusy(true);
     void load();
   }, [load]);
+
+  useLoad(load);
 
   // first paint before any data lands → full-page skeleton
   if (!usage && !error) {
@@ -625,7 +631,7 @@ export default function UsagePage() {
         </div>
         <div className="flex items-center gap-3">
           <RangeTabs value={range} onChange={setRange} />
-          <Button variant="soft" onClick={load} busy={busy}>
+          <Button variant="soft" onClick={refresh} busy={busy}>
             <RefreshCw className="size-4" /> Refresh
           </Button>
         </div>

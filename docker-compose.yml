@@ -1,45 +1,87 @@
-# Local KARAG stack: API + pgvector + Ollama (free local model).
-# Bring up:  docker compose up --build
-# Then pull models once:  docker compose exec ollama ollama pull qwen2.5 && \
-#                         docker compose exec ollama ollama pull nomic-embed-text
+# The whole KARAG platform in one command:
+#
+#     docker compose up --build
+#
+# Console  → http://localhost:3000   (sign in with a token from KARAG_TOKENS)
+# API      → http://localhost:8000   (/health, /v1/*, legacy console at /ui)
+#
+# Provider keys and tokens come from .env — copy .env.example if you have none.
+# State lives in ./data, so it survives `docker compose down`.
+
+x-api-env: &api-env
+  # SQLite by default: no extra service to run, and the files are visible in
+  # ./data. Point KARAG_STORE at pgvector instead for a real deployment.
+  KARAG_STORE: sqlite
+  KARAG_SQLITE_PATH: /data/karag.db
+  KARAG_APP_STORE: sqlite
+  KARAG_APP_DB: /data/karag_app.db
+  KARAG_CHAT_STORE: sqlite
+  KARAG_CHAT_DB: /data/karag_chats.db
+  KARAG_USAGE_STORE: sqlite
+  KARAG_USAGE_DB: /data/karag_usage.db
+
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: karag
-      POSTGRES_PASSWORD: karag
-      POSTGRES_DB: karag
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
-    ports:
-      - "5432:5432"
-
-  ollama:
-    image: ollama/ollama:latest
-    volumes:
-      - ollama:/root/.ollama
-    ports:
-      - "11434:11434"
-
-  karag:
+  api:
     build: .
-    depends_on:
-      - db
-      - ollama
-    environment:
-      KARAG_GENERATOR: ollama          # swap to 'anthropic' + ANTHROPIC_API_KEY for prod
-      KARAG_EMBEDDER: ollama
-      KARAG_STORE: pgvector
-      KARAG_OLLAMA_URL: http://ollama:11434
-      KARAG_OLLAMA_CHAT_MODEL: qwen2.5
-      KARAG_OLLAMA_EMBED_MODEL: nomic-embed-text
-      KARAG_OLLAMA_EMBED_DIM: "768"
-      KARAG_PG_DSN: "host=db port=5432 dbname=karag user=karag password=karag"
-      KARAG_TOKENS: "tkn_ceo:koinoti:ceo1:ceo,tkn_admin:koinoti:admin1:admin"
+    image: karag-api
+    env_file:
+      - .env
+    # These win over .env, whose paths are relative to the host checkout.
+    environment: *api-env
+    volumes:
+      - ./data:/data
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
-volumes:
-  pgdata:
-  ollama:
+
+  web:
+    build:
+      context: ./web
+      args:
+        # Baked into the rewrite rules at build time — see web/next.config.ts.
+        KARAG_API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Evaluates stored alert rules on their own cadence. Idle until someone
+  # creates a rule, so it costs nothing on a fresh install.
+  scheduler:
+    build: .
+    image: karag-api
+    command: ["python", "scripts/run_scheduler.py"]
+    env_file:
+      - .env
+    environment: *api-env
+    volumes:
+      - ./data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Opt-in: needs KARAG_TELEGRAM_BOT_TOKEN in .env, and exits without one.
+  #     docker compose --profile telegram up
+  telegram:
+    build: .
+    image: karag-api
+    command: ["python", "scripts/run_telegram_bot.py"]
+    profiles: ["telegram"]
+    env_file:
+      - .env
+    environment: *api-env
+    volumes:
+      - ./data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
