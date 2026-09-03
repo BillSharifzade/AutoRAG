@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useMemo, useState } from "react";
+import { useT } from "@/i18n";
 import { api, type ApiError, type AuditEvent } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useLoad } from "@/lib/use-load";
@@ -45,7 +46,11 @@ type Lens = "all" | "allow" | "deny";
 /** Events shown before the list asks to go further back. */
 const PAGE = 40;
 
+/** Who may read the log — mirrors the navigation gate in the shell. */
+const READERS = new Set(["admin", "ceo"]);
+
 export default function AuditPage() {
+  const t = useT();
   const { token, me } = useAuth();
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [problem, setProblem] = useState("");
@@ -96,15 +101,19 @@ export default function AuditPage() {
     });
   }, [events, lens, query]);
 
-  /* A refusal is the interesting case, so it's never hidden behind the
-     "restricted" wall without saying who can see it. */
-  if (problem && (events?.length ?? 0) === 0) {
+  /* Administrators and leadership may read the log. Anyone else meets the
+     wall — as does a refusal from the server while `me` is still resolving,
+     because a refusal is the interesting case and is never hidden without
+     saying who can see it. */
+  const mayRead = me ? me.roles.some((r) => READERS.has(r)) : undefined;
+  const refused = problem !== "" && (events?.length ?? 0) === 0;
+  if (mayRead === false || (mayRead === undefined && refused)) {
     return (
       <Stagger>
         <StaggerItem>
           <Restricted
-            what="The activity log is for administrators"
-            who="It records every question, every document read and every refusal across the company — including who asked and from where. That's kept to administrators."
+            what={t("audit.restricted.what")}
+            who={t("audit.restricted.who")}
             yourRole={me?.roles.map(roleLabel).join(", ")}
           />
         </StaggerItem>
@@ -115,20 +124,20 @@ export default function AuditPage() {
   return (
     <Stagger className="flex flex-col gap-6">
       <PageHero
-        eyebrow="Activity"
-        title="Everything that happened, in order"
-        lead="Every question asked, every document read, every refusal — with who, when and from where. Nothing here can be edited, including by an administrator."
+        eyebrow={t("audit.eyebrow")}
+        title={t("audit.title")}
+        lead={t("audit.lead")}
         art={
           events && events.length > 0 ? (
             <div className="flex gap-3">
               <Tally
-                label="Recorded"
+                label={t("audit.tally.recorded")}
                 value={events.length}
                 tone="neutral"
                 icon={<Activity className="size-4" />}
               />
               <Tally
-                label="Blocked"
+                label={t("audit.tally.blocked")}
                 value={blocked}
                 tone={blocked > 0 ? "bad" : "good"}
                 icon={
@@ -153,11 +162,11 @@ export default function AuditPage() {
                 setLens(l);
                 setLimit(PAGE);
               }}
-              ariaLabel="Which events"
+              ariaLabel={t("audit.lens.aria")}
               options={[
-                { value: "all", label: "Everything" },
-                { value: "allow", label: "Allowed" },
-                { value: "deny", label: "Blocked", count: blocked },
+                { value: "all", label: t("audit.lens.all") },
+                { value: "allow", label: t("audit.lens.allow") },
+                { value: "deny", label: t("audit.lens.deny"), count: blocked },
               ]}
             />
             <div className="flex items-center gap-2">
@@ -166,8 +175,8 @@ export default function AuditPage() {
                 <Input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search by person or action…"
-                  aria-label="Search activity"
+                  placeholder={t("audit.search")}
+                  aria-label={t("audit.search.aria")}
                   className="w-60 pl-9"
                 />
               </div>
@@ -190,12 +199,14 @@ export default function AuditPage() {
               <Empty
                 icon={<Activity className="size-6" />}
                 title={
-                  events.length === 0 ? "Nothing recorded yet" : "Nothing matches"
+                  events.length === 0
+                    ? t("audit.empty.title")
+                    : t("audit.noMatch.title")
                 }
                 hint={
                   events.length === 0
-                    ? "Ask a question or add a document — everything anyone does lands here within a second."
-                    : "Try a different name, or switch back to Everything."
+                    ? t("audit.empty.hint")
+                    : t("audit.noMatch.hint")
                 }
               />
             ) : (
@@ -217,7 +228,7 @@ export default function AuditPage() {
                     onClick={() => setLimit((l) => l + PAGE)}
                     className="mt-4 w-full cursor-pointer rounded-xl border border-line py-2.5 text-[13px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
                   >
-                    Go further back ({shown.length - limit} more)
+                    {t("audit.more", { n: shown.length - limit })}
                   </button>
                 )}
               </>
@@ -277,6 +288,7 @@ function readableResource(r: string | undefined): string | null {
 }
 
 function Event({ e, i }: { e: AuditEvent; i: number }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const denied = e.decision === "deny";
   const detail = Object.entries(e.detail ?? {}).filter(
@@ -312,7 +324,7 @@ function Event({ e, i }: { e: AuditEvent; i: number }) {
           <span className="text-[13.5px] text-mut">{actionWords(e.action)}</span>
           {denied && (
             <span className="rounded-md bg-bad-soft px-1.5 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-bad">
-              blocked
+              {t("audit.pill.blocked")}
             </span>
           )}
           <span className="ml-auto shrink-0 text-[12px] tabular-nums text-faint">
@@ -335,11 +347,14 @@ function Event({ e, i }: { e: AuditEvent; i: number }) {
             >
               <dl className="mt-2 grid gap-x-6 gap-y-1 rounded-lg bg-bg-deep p-3 text-[12px] sm:grid-cols-2">
                 {e.roles && e.roles.length > 0 && (
-                  <Row k="Signed in as" v={e.roles.map(roleLabel).join(", ")} />
+                  <Row
+                    k={t("audit.row.signedAs")}
+                    v={e.roles.map(roleLabel).join(", ")}
+                  />
                 )}
-                {e.resource && <Row k="Applied to" v={e.resource} />}
-                {e.ip && <Row k="From" v={e.ip} />}
-                {e.user_agent && <Row k="Device" v={e.user_agent} />}
+                {e.resource && <Row k={t("audit.row.appliedTo")} v={e.resource} />}
+                {e.ip && <Row k={t("audit.row.from")} v={e.ip} />}
+                {e.user_agent && <Row k={t("audit.row.device")} v={e.user_agent} />}
                 {detail.map(([k, v]) => (
                   <Row key={k} k={k.replace(/_/g, " ")} v={String(v)} />
                 ))}

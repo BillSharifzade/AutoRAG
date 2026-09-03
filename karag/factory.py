@@ -32,6 +32,13 @@ from .conversations import (
     SqliteConversationStore,
 )
 from .errors import ConfigError
+from .integrations.dbsetup import DatabaseService
+from .integrations.sources import (
+    DataSourceService,
+    DataSourceStore,
+    InMemoryDataSourceStore,
+    SqliteDataSourceStore,
+)
 from .knowledge.ingest import IngestionService
 from .knowledge.rag import RagService
 from .knowledge.retrieve import RetrievalService
@@ -47,6 +54,7 @@ from .scheduler import (
 from .selfknowledge.codebase import CodebaseIndex
 from .selfknowledge.skills import platform_skills
 from .skills.admin_skills import admin_skills
+from .skills.authoring import authoring_skills
 from .skills.catalog import SkillCatalog
 from .skills.definitions import (
     InMemorySkillDefinitionStore,
@@ -170,6 +178,14 @@ def build_definition_store(s: Settings) -> SkillDefinitionStore:
         return InMemorySkillDefinitionStore()
     if s.app_store == "sqlite":
         return SqliteSkillDefinitionStore(s.app_db_path)
+    raise ConfigError(f"unknown app_store: {s.app_store}")
+
+
+def build_source_store(s: Settings) -> DataSourceStore:
+    if s.app_store == "memory":
+        return InMemoryDataSourceStore()
+    if s.app_store == "sqlite":
+        return SqliteDataSourceStore(s.app_db_path)
     raise ConfigError(f"unknown app_store: {s.app_store}")
 
 
@@ -319,6 +335,10 @@ class Platform:
     alert_service: AlertService
     codebase: CodebaseIndex
     code_changes: CodeChangeService
+    # guided integrations: API endpoints (fetch skill + timed knowledge sync)
+    # and databases connected from login details or an uploaded file
+    sources: DataSourceService
+    databases: DatabaseService
     # definitions that failed to materialise at boot (missing connector, unset
     # env var). Surfaced by /health so a broken skill is visible, not silent.
     skill_load_errors: list[str] = field(default_factory=list)
@@ -338,6 +358,13 @@ def build_platform(
     audit_log = audit or build_audit_log(s)
     usage_rec = usage or build_usage_recorder(s)
 
+    # File authoring (xlsx/docx/pptx/pdf/plain files) is a product feature, so
+    # it is wired here rather than left to whichever script starts the app —
+    # ``uvicorn karag.api.app:app`` used to boot without it.
+    for skill in authoring_skills():
+        if reg.get(skill.tenant_id, skill.name) is None:
+            reg.register(skill)
+
     ingestion = IngestionService(store, gateway.embedder, audit=audit_log)
     retrieval = RetrievalService(store, gateway.embedder, audit=audit_log)
     rag = RagService(retrieval, gateway.generator)
@@ -348,6 +375,8 @@ def build_platform(
         audit=audit_log, usage=usage_rec, language=s.default_language,
         self_knowledge=s.self_knowledge,
         engineer_generator=build_engineer_generator(s),
+        min_score=s.min_score, max_per_document=s.max_per_document,
+        skill_timeout_s=s.skill_timeout_s,
     )
     assistants = build_assistant_registry(s)
     assistant_service = AssistantService(assistants, orchestrator)
@@ -356,10 +385,25 @@ def build_platform(
     # Stored skills become live tools here: definitions authored through the
     # API/UI are materialised at boot, so a restart restores the catalogue
     # instead of losing it (§5 — skills are the product, not a code artefact).
+    connector_store = build_connector_store(s)
     catalog = SkillCatalog(
-        reg, build_definition_store(s), build_connector_store(s), audit=audit_log
+        reg, build_definition_store(s), connector_store, audit=audit_log
     )
     _, load_errors = catalog.load_all()
+
+    # Guided integrations. API sources register their fetch skills; databases
+    # connected with free queries allowed register their query skills.
+    sources = DataSourceService(
+        build_source_store(s), reg, ingestion, store,
+        policy=build_web_policy(s), audit=audit_log,
+    )
+    sources.load_all()
+    databases = DatabaseService(
+        catalog, connector_store, reg, ingestion, store,
+        generator=gateway.generator, upload_dir=s.upload_dir, audit=audit_log,
+    )
+    _, db_errors = databases.load_all()
+    load_errors = [*load_errors, *db_errors]
 
     directory = build_directory(s)
     alert_store = build_alert_store(s)
@@ -406,6 +450,8 @@ def build_platform(
         alert_service=AlertService(alert_store, audit=audit_log),
         codebase=codebase,
         code_changes=code_changes,
+        sources=sources,
+        databases=databases,
         skill_load_errors=load_errors,
     )
 

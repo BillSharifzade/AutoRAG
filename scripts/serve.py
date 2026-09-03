@@ -1,4 +1,4 @@
-"""Launch the KARAG HTTP app (console /ui, builder /builder, REST /v1/*).
+"""Launch the KARAG HTTP app (REST /v1/*; the console is the Next.js app in web/).
 
 Reads provider + auth config from the environment (load .env first). Registers
 the sample sales skills so the data plane is exercisable in the browser; shares
@@ -16,15 +16,12 @@ from karag.api.security import InMemoryResolver
 from karag.config import Settings
 from karag.factory import build_platform
 from karag.skills.registry import SkillRegistry
-from karag.skills.authoring import authoring_skills
 from karag.skills.samples import sales_by_store_skill, sales_report_skill
 from karag.tenants import ChainResolver, DirectoryResolver
 
 registry = SkillRegistry()
-
-# File-authoring skills are product features — always available.
-for _skill in authoring_skills():
-    registry.register(_skill)
+# File-authoring skills (xlsx/docx/pptx/pdf) are registered by build_platform
+# itself, so `uvicorn karag.api.app:app` and this script offer the same tools.
 
 # The sample sales skills return hard-coded fake data. Now that skills are
 # authored at runtime and stored, leaving them on shadows real ones: two tools
@@ -48,6 +45,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("KARAG_PORT", "8000"))
     for err in platform.skill_load_errors:
         print(f"[karag-web] stored skill failed to load: {err}", flush=True)
-    print(f"[karag-web] http://{host}:{port}/ui  ·  builder /builder  ·  "
+    print(f"[karag-api] http://{host}:{port}/health  ·  console: web/ on :3000  ·  "
           f"demo token: tkn_ceo", flush=True)
     uvicorn.run(app, host=host, port=port, log_level="info")

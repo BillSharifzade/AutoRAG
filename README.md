@@ -110,7 +110,7 @@ PYTHONPATH=. .venv/bin/uvicorn karag.api.app:app
 ```bash
 set -a; source .env; set +a
 
-# API + console  (serves /ui, /builder and every /v1/* endpoint)
+# API  (every /v1/* endpoint; the console is the Next.js app in web/)
 PYTHONPATH=. .venv/bin/python scripts/serve.py
 
 # Proactive alerts — evaluates stored rules on their own cadence
@@ -152,6 +152,18 @@ another tenant's data.
 ## Implemented
 
 * **Two planes** — knowledge (RAG + citations) and data (verified skills).
+* **Robust turns** — a skill that raises anything (a renamed table, an API
+  that is down) becomes a tool error the model reads and routes around, never
+  a failed request; skills run under a timeout (`KARAG_SKILL_TIMEOUT`). Every
+  model call of a tool-calling turn is metered, cached prompt tokens are billed
+  at their real weights, and the system prompt + tool list carry prompt-cache
+  breakpoints (≈5k tokens cached per request on Claude).
+* **Retrieval hygiene** — greetings retrieve nothing; a short follow-up is
+  searched together with the question it follows; at most
+  `KARAG_MAX_PER_DOCUMENT` chunks per document; an optional score floor
+  (`KARAG_MIN_SCORE`); sources are fenced and labelled as untrusted data.
+  Re-adding a document under an existing title *replaces* the old copy
+  (`scripts/dedupe_documents.py` cleans up databases filled before this).
 * **Retrieval-time RBAC + tenant isolation** — enforced inside the store.
 * **Real data connectors** — read-only SQL (`SqlConnector`, SQLite + Postgres,
   with statement guards/row limits/timeouts) and REST; `make_sql_skill` turns a
@@ -161,6 +173,20 @@ another tenant's data.
 * **Office generation (Phase 1.5)** — valid `.xlsx/.docx/.pptx/.csv` via stdlib
   OOXML, verified to open in LibreOffice; returned as `Artifact`s (bytes never
   enter the model's context).
+* **Guided integrations (Data page)** — a non-engineer connects an **API**
+  by pasting its address: the endpoint is fetched (through the SSRF guard),
+  profiled, and the model explains what the data is and what each field means;
+  the person corrects it, then saves it as a live `fetch_<name>` skill, as a
+  knowledge document refreshed on a cadence (hourly by default; unchanged
+  bytes are never rewritten — the scheduler process runs the sync), or both.
+  A **database** is connected from login details (PostgreSQL, MySQL) or an
+  uploaded file (`.sqlite` / `.db`, or a `mysqldump` / `pg_dump` `.sql`
+  imported best-effort into SQLite with a report): the schema is read and
+  described by the model, written into knowledge, and — switchable per
+  connection — the assistant may write its own read-only SELECT through a
+  `query_<name>` skill (read-only transaction, row limit, timeout, every query
+  audited and shown with the answer). Credentials are sealed at rest with
+  `KARAG_SECRET_KEY` and never served back.
 * **Runtime skill registry** — skills live as *data*, not code: register a
   read-only connection, author a parameterised SQL/REST skill through the API or
   the `/skills` console page, test it (the executed query and rows come back),
@@ -180,9 +206,9 @@ another tenant's data.
   by the model that actually served each request (a fallback is billed to the
   fallback), priced at read time from a configurable rate table (`KARAG_PRICING`).
   An unpriced model is reported as such rather than guessed.
-* **Multilingual (RU / TJ / EN)** — the answer language resolves per request →
-  account → tenant → deployment default, is pinnable on an assistant and on a
-  messenger binding, and is switchable from the console topbar.
+* **Multilingual (RU / TJ / EN)** — the answer always follows the language of
+  the question, whatever language the documents are in. The console's own
+  interface is Russian by default with English one click away.
 * **Platform self-knowledge** — the assistant carries a handbook of what KARAG
   is plus a capability guide for the asking user's roles, and can read its own
   source (`search_codebase`, `read_source_file`) to answer implementation
@@ -211,9 +237,11 @@ another tenant's data.
 * **Auth** — pluggable resolver: demo tokens *or* real **JWT (HS256, stdlib)**;
   SSO issues signed JWTs KARAG verifies.
 * **No-code assistants** — create/edit a tenant-scoped assistant (name +
-  instruction + skill allow-list) and ask through it; it can only *narrow* the
-  caller's access. A graphical **builder SPA** at `/builder` (create, edit,
-  toggle skills, live preview) drives it end to end.
+  instruction + skill allow-list: `null` = everything the person may use, `[]`
+  = documents only, a list = exactly those) and ask through it; it can only
+  *narrow* the caller's access. Everyone in the company may use an assistant;
+  only its creator or an administrator may change or delete it. A chat whose
+  assistant was deleted keeps working and says so (`assistant_missing`).
 * **Office generation (Phase 1.5)** — `.pptx` decks use a branded layout
   (title-bar, accent rule, bulleted body, footer + page numbers) with a distinct
   cover slide; all formats verified to open headless in LibreOffice.
@@ -223,17 +251,19 @@ another tenant's data.
   refusal and never processed (fail-closed). Outbound alert notifiers for both
   platforms also ship (`TelegramNotifier`, `WhatsAppNotifier`).
 * **HTTP API** — FastAPI app (auth, ingest, file upload, ask, assistants CRUD,
-  audit, usage, messenger webhooks), tested with `TestClient`; operator console
-  at `/ui`, builder at `/builder`, embeddable `deploy/widget.html`.
+  audit, usage, messenger webhooks), tested with `TestClient`; embeddable
+  `deploy/widget.html`.
 * **Web app (`web/`)** — Next.js 16 + TypeScript + Tailwind v4 frontend: chat
   with full provenance (plane badge, citations, executed queries, artifact
   downloads), assistant builder with live preview, drag-drop document ingestion
   with the classification suggestion and a delete-able knowledge catalogue, the
   **skill authoring** page (connections · editor · test run · library import),
   the **admin** page (tenant onboarding, account tokens, alert rules), audit
-  table, usage + cost dashboard, and the RU/TJ/EN switcher. Role-gated
-  navigation; light/dark theme; proxies `/v1/*` to FastAPI (`npm run dev` in
-  `web/`, backend on :8000 via `scripts/serve.py`).
+  table, usage + cost dashboard, and a Russian/English interface switch.
+  Answers stream in as they are written (`POST /v1/chats/{id}/stream`, SSE:
+  status → tool → delta → done) and stopping a reply cancels it on the server.
+  Role-gated navigation; light/dark theme; proxies `/v1/*` to FastAPI
+  (`npm run dev` in `web/`, backend on :8000 via `scripts/serve.py`).
 * **Proactive alerts** — stored rules run a verified skill on their own cadence
   and notify (console / webhook / Telegram / WhatsApp) when the condition fires.
   `scripts/run_scheduler.py` is the long-lived process; `POST /v1/alerts/{id}/run`
@@ -252,7 +282,7 @@ another tenant's data.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest -q          # 285 offline tests (5 env-gated skips)
+.venv/bin/python -m pytest -q          # 457 offline tests (5 env-gated skips)
 ```
 
 The pgvector store has a real integration test, run it against a live database:

@@ -6,9 +6,10 @@
 
    Chat is the one destination with contents of its own, so its saved
    conversations hang underneath it in the sidebar rather than taking a column
-   away from the conversation itself. The topbar is left with nothing but the
-   name of where you are; the answer-language control sits with the other
-   session settings at the foot of the sidebar. */
+   away from the conversation itself; that list scrolls inside its own box so
+   a long history never pushes the other destinations off screen. The topbar is
+   left with nothing but the name of where you are; the interface-language
+   switch sits with the other session settings at the foot of the sidebar. */
 
 import {
   ArrowRight,
@@ -16,6 +17,7 @@ import {
   Bot,
   Code2,
   Database,
+  DatabaseZap,
   FileText,
   FileSpreadsheet,
   LogOut,
@@ -33,11 +35,11 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
-import { LANGUAGE_LABELS, type Language } from "@/lib/api";
+import { LOCALES, useLocale, useT } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { useChat } from "@/lib/chat-store";
 import { ChatHistory } from "@/components/chat-history";
-import { BrandLogo, Button, Input, Picker } from "@/components/ui";
+import { BrandLogo, Button, Input } from "@/components/ui";
 
 const Hyperspeed = dynamic(() => import("@/components/hyperspeed/Hyperspeed"), {
   ssr: false,
@@ -86,47 +88,101 @@ const ROAD_OPTIONS = {
 /* `gate` hides a destination unless the session holds one of those roles —
    cosmetic only; every endpoint behind them is authorised server-side too. */
 const NAV = [
-  { href: "/", label: "Chat", icon: MessageSquareText },
-  { href: "/assistants", label: "Assistants", icon: Bot },
-  { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/", key: "nav.chat", icon: MessageSquareText },
+  { href: "/assistants", key: "nav.assistants", icon: Bot },
+  { href: "/documents", key: "nav.documents", icon: FileText },
   {
     href: "/skills",
-    label: "Skills",
+    key: "nav.skills",
     icon: Wrench,
     gate: ["admin", "skill_author", "ceo"],
   },
   {
+    href: "/data",
+    key: "nav.data",
+    icon: DatabaseZap,
+    gate: ["admin", "skill_author", "ceo"],
+  },
+  {
     href: "/admin",
-    label: "Admin",
+    key: "nav.admin",
     icon: Settings2,
     gate: ["admin", "ceo", "platform_admin"],
   },
   {
     href: "/engineering",
-    label: "Engineering",
+    key: "nav.engineering",
     icon: Code2,
     gate: ["karag_engineer"],
   },
-  { href: "/audit", label: "Audit", icon: ScrollText },
-  { href: "/usage", label: "Usage", icon: Gauge },
+  { href: "/audit", key: "nav.audit", icon: ScrollText, gate: ["admin", "ceo"] },
+  { href: "/usage", key: "nav.usage", icon: Gauge },
 ];
 
 const FEATURES = [
-  { icon: BookOpenCheck, text: "Answers cite their sources — every claim traceable" },
-  { icon: Database, text: "Live figures come from verified skills, never guesses" },
-  { icon: FileSpreadsheet, text: "Ready .xlsx / .docx / .pptx reports on demand" },
-  { icon: ShieldCheck, text: "Forbidden data never reaches the model" },
+  { icon: BookOpenCheck, key: "login.f1" },
+  { icon: Database, key: "login.f2" },
+  { icon: FileSpreadsheet, key: "login.f3" },
+  { icon: ShieldCheck, key: "login.f4" },
 ];
+
+/* ---------------- interface language ---------------- */
+
+/* Two languages, one click, visible everywhere: a small segmented switch. It
+   only changes the chrome — answers always follow the question. */
+function LocaleSwitch({ compact = false }: { compact?: boolean }) {
+  const { locale, setLocale } = useLocale();
+  const t = useT();
+  return (
+    <div
+      role="radiogroup"
+      aria-label={t("shell.language")}
+      className={`inline-flex items-center rounded-full border border-line bg-surface-2 p-0.5 ${
+        compact ? "" : "w-full"
+      }`}
+    >
+      {LOCALES.map((l) => {
+        const active = l.value === locale;
+        return (
+          <button
+            key={l.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => setLocale(l.value)}
+            title={l.label}
+            className={`relative isolate flex-1 cursor-pointer rounded-full px-2.5 py-1 text-[12px] font-semibold tracking-wide transition-colors ${
+              active ? "text-ink" : "text-faint hover:text-mut"
+            }`}
+          >
+            {active && (
+              <motion.span
+                layoutId={compact ? "locale-pill-compact" : "locale-pill"}
+                transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                className="absolute inset-0 -z-10 rounded-full bg-surface [box-shadow:var(--shadow-sm)]"
+              />
+            )}
+            {l.short}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ---------------- connect gate ---------------- */
 
 function ConnectGate() {
   const { connect } = useAuth();
+  const t = useT();
   const [value, setValue] = useState("");
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
       {/* Form panel */}
-      <div className="flex items-center justify-center p-8">
+      <div className="relative flex items-center justify-center p-8">
+        <div className="absolute right-6 top-6">
+          <LocaleSwitch compact />
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
@@ -136,11 +192,9 @@ function ConnectGate() {
           <BrandLogo className="h-14 w-auto" />
 
           <h2 className="font-display mt-10 text-3xl font-bold tracking-tight">
-            Welcome back
+            {t("login.welcome")}
           </h2>
-          <p className="mt-2 text-[15px] text-mut">
-            Sign in with your access token.
-          </p>
+          <p className="mt-2 text-[15px] text-mut">{t("login.sub")}</p>
 
           <form
             onSubmit={(e) => {
@@ -152,14 +206,14 @@ function ConnectGate() {
             <Input
               autoFocus
               type="password"
-              placeholder="Access token…"
+              placeholder={t("login.token")}
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              aria-label="Access token"
+              aria-label={t("login.token")}
               className="h-12"
             />
             <Button type="submit" disabled={!value.trim()} className="h-12 text-[15px]">
-              Continue <ArrowRight className="size-4" />
+              {t("login.continue")} <ArrowRight className="size-4" />
             </Button>
           </form>
         </motion.div>
@@ -181,8 +235,8 @@ function ConnectGate() {
               transition={{ duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
               className="font-display max-w-lg text-5xl font-bold leading-[1.12] tracking-tight text-white"
             >
-              Your company&apos;s AI.{" "}
-              <span className="text-[#ec2336]">On your data.</span>
+              {t("login.hero.a")}{" "}
+              <span className="text-[#ec2336]">{t("login.hero.b")}</span>
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: 20 }}
@@ -190,14 +244,13 @@ function ConnectGate() {
               transition={{ delay: 0.12, duration: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
               className="mt-5 max-w-md text-[16px] leading-relaxed text-white/65"
             >
-              Knowledge, live numbers and ready-made documents — inside your
-              perimeter, governed by your roles.
+              {t("login.lead")}
             </motion.p>
 
             <ul className="mt-10 flex flex-col gap-4">
-              {FEATURES.map(({ icon: Icon, text }, i) => (
+              {FEATURES.map(({ icon: Icon, key }, i) => (
                 <motion.li
-                  key={text}
+                  key={key}
                   initial={{ opacity: 0, x: -16 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.25 + i * 0.09, duration: 0.5 }}
@@ -206,7 +259,7 @@ function ConnectGate() {
                   <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/10 text-[#ff4d5e] backdrop-blur">
                     <Icon className="size-4" />
                   </span>
-                  {text}
+                  {t(key)}
                 </motion.li>
               ))}
             </ul>
@@ -219,39 +272,11 @@ function ConnectGate() {
   );
 }
 
-/* ---------------- language ---------------- */
-
-/* §2 sells Russian and Tajik as the differentiator, so the choice stays one
-   click away — but it belongs with the other session settings at the foot of
-   the sidebar, not in the topbar of every page. It pins the *answer* language;
-   the chrome stays English. */
-function LanguageSwitcher() {
-  const { language, setLanguage } = useAuth();
-  return (
-    <div className="hidden lg:block">
-      <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
-        Answer language
-      </p>
-      <Picker
-        compact
-        dropUp
-        value={language}
-        onChange={(v) => setLanguage(v as Language)}
-        options={(Object.keys(LANGUAGE_LABELS) as Language[]).map((v) => ({
-          value: v,
-          label: LANGUAGE_LABELS[v],
-        }))}
-        ariaLabel="Answer language"
-        className="w-full"
-      />
-    </div>
-  );
-}
-
 /* ---------------- signature ---------------- */
 
 /* Quiet on purpose — it only comes forward when someone goes looking. */
 function CraftedBy() {
+  const t = useT();
   return (
     <a
       href="https://billsharifzade.github.io/"
@@ -260,7 +285,7 @@ function CraftedBy() {
       title="crafted by qwantum"
       className="mt-3 hidden select-none text-center text-[10px] tracking-[0.08em] text-faint/40 transition-colors duration-500 hover:text-accent lg:block"
     >
-      crafted by <span className="font-semibold">qwantum</span>
+      {t("shell.crafted")} <span className="font-semibold">qwantum</span>
     </a>
   );
 }
@@ -269,11 +294,13 @@ function CraftedBy() {
 
 export function Shell({ children }: { children: ReactNode }) {
   const { token, ready, disconnect, theme, toggleTheme, me } = useAuth();
+  const { ready: localeReady } = useLocale();
+  const t = useT();
   const pathname = usePathname();
   const chat = useChat();
   const onChat = pathname === "/";
 
-  if (!ready) return null;
+  if (!ready || !localeReady) return null;
   if (!token) return <ConnectGate />;
 
   // Until identity resolves, show only the ungated destinations rather than
@@ -282,10 +309,11 @@ export function Shell({ children }: { children: ReactNode }) {
     (item) => !item.gate || (me?.roles ?? []).some((r) => item.gate.includes(r)),
   );
 
-  const activeLabel =
+  const activeKey =
     NAV.find(({ href }) =>
       href === "/" ? pathname === "/" : pathname.startsWith(href),
-    )?.label ?? "KARAG";
+    )?.key ?? "app.name";
+  const activeLabel = t(activeKey);
 
   return (
     <div className="flex min-h-dvh">
@@ -304,7 +332,8 @@ export function Shell({ children }: { children: ReactNode }) {
         </Link>
 
         <nav className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-3.5">
-          {nav.map(({ href, label, icon: Icon }) => {
+          {nav.map(({ href, key, icon: Icon }) => {
+            const label = t(key);
             const active =
               href === "/" ? pathname === "/" : pathname.startsWith(href);
             return (
@@ -328,8 +357,10 @@ export function Shell({ children }: { children: ReactNode }) {
                 </Link>
 
                 {/* Chat's own contents, nested under it and only while you are
-                    there. The rail is icon-only below lg, so the chat page
-                    keeps a drawer for narrow screens. */}
+                    there. The list has a fixed ceiling and scrolls inside it,
+                    so a year of conversations still leaves every other
+                    destination in view. The rail is icon-only below lg, so the
+                    chat page keeps a drawer for narrow screens. */}
                 <AnimatePresence initial={false}>
                   {href === "/" && onChat && (
                     <motion.div
@@ -339,14 +370,14 @@ export function Shell({ children }: { children: ReactNode }) {
                       transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
                       className="hidden overflow-hidden lg:block"
                     >
-                      <div className="ml-4 max-h-[46vh] border-l border-line pb-2 pl-2.5 pt-1.5">
+                      <div className="ml-4 flex max-h-[46vh] flex-col border-l border-line pb-2 pl-2.5 pt-1.5">
                         <ChatHistory
                           sessions={chat.sessions}
                           loading={chat.loadingSessions}
                           activeId={chat.activeId}
                           onNew={chat.newChat}
                           onOpen={(id) => void chat.openChat(id)}
-                          onRename={(id, t) => void chat.renameChat(id, t)}
+                          onRename={(id, tt) => void chat.renameChat(id, tt)}
                           onDelete={(id) => void chat.deleteChat(id)}
                         />
                       </div>
@@ -360,11 +391,17 @@ export function Shell({ children }: { children: ReactNode }) {
 
         {/* session controls */}
         <div className="border-t border-line p-3.5">
-          <LanguageSwitcher />
+          <div className="hidden lg:block">
+            <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
+              {t("shell.language")}
+            </p>
+            <LocaleSwitch />
+          </div>
           <div className="mt-2 flex items-center justify-center gap-1 lg:justify-between">
             <button
               onClick={toggleTheme}
-              title="Toggle theme"
+              title={t("shell.theme")}
+              aria-label={t("shell.theme")}
               className="grid size-10 cursor-pointer place-items-center rounded-lg text-mut transition-colors hover:bg-surface-2 hover:text-ink"
             >
               {theme === "dark" ? (
@@ -373,9 +410,13 @@ export function Shell({ children }: { children: ReactNode }) {
                 <Moon className="size-[18px]" />
               )}
             </button>
+            <span className="lg:hidden">
+              <LocaleSwitch compact />
+            </span>
             <button
               onClick={disconnect}
-              title="Disconnect"
+              title={t("shell.signout")}
+              aria-label={t("shell.signout")}
               className="grid size-10 cursor-pointer place-items-center rounded-lg text-mut transition-colors hover:bg-bad-soft hover:text-bad"
             >
               <LogOut className="size-[18px]" />

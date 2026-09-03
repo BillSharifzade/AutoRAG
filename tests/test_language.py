@@ -44,77 +44,54 @@ def _platform(language="auto"):
 # ---------- the instruction itself ----------
 
 
-def test_auto_adds_no_instruction():
-    assert language_instruction("auto") is None
-    assert language_instruction(None) is None
-    assert language_instruction("") is None
-
-
-@pytest.mark.parametrize(
-    "code,marker", [("ru", "Russian"), ("tg", "Tajik"), ("en", "English")]
-)
-def test_each_supported_language_has_an_instruction(code, marker):
-    assert marker in language_instruction(code)
-
-
-def test_an_unknown_language_adds_nothing_rather_than_guessing():
-    assert language_instruction("fr") is None
+def test_the_answer_always_follows_the_question():
+    """Pinning is gone: every value yields the same 'match the question' rule."""
+    for value in ("auto", None, "", "ru", "tg", "en", "fr"):
+        clause = language_instruction(value)
+        assert "language the user wrote" in clause
+        assert "Russian" in clause and "Tajik" in clause and "English" in clause
 
 
 def test_instructions_forbid_altering_numbers():
     """Translating a figure's label is fine; translating the figure is not."""
-    for code in ("ru", "tg", "en"):
-        assert "never alter the numbers" in language_instruction(code)
+    assert "never alter the numbers" in language_instruction()
 
 
 # ---------- orchestrator ----------
 
 
-async def test_request_language_reaches_the_system_prompt():
+async def test_the_rule_reaches_the_system_prompt():
     plat, recorder = _platform()
     await plat.orchestrator.ask(CEO, "hello", language="tg")
-    assert "Tajik" in recorder.systems[-1]
+    assert "language the user wrote" in recorder.systems[-1]
+    # nothing pins Tajik any more, whatever the caller asked for
+    assert "Always answer in Tajik" not in recorder.systems[-1]
 
 
-async def test_deployment_default_applies_when_nothing_is_requested():
+async def test_deployment_default_no_longer_pins():
     plat, recorder = _platform(language="ru")
     await plat.orchestrator.ask(CEO, "hello")
-    assert "Russian" in recorder.systems[-1]
+    assert "Always answer in Russian" not in recorder.systems[-1]
+    assert "language the user wrote" in recorder.systems[-1]
 
 
-async def test_per_request_language_overrides_the_deployment_default():
-    plat, recorder = _platform(language="ru")
-    await plat.orchestrator.ask(CEO, "hello", language="en")
-    system = recorder.systems[-1]
-    # Assert on the directive itself: the platform handbook also mentions the
-    # supported languages by name, so a bare "Russian" substring proves nothing.
-    assert "Always answer in English" in system
-    assert "Always answer in Russian" not in system
-
-
-async def test_language_clause_comes_after_the_assistant_instruction():
-    """An assistant persona written in English must not undo a Tajik pin."""
+async def test_language_rule_comes_after_the_assistant_instruction():
+    """An assistant persona written in English must not undo the rule."""
     plat, recorder = _platform()
     asst = plat.assistants.create(
         CEO, name="Helpdesk", instruction="Be extremely concise.", language="tg"
     )
     await plat.assistant_service.ask(CEO, asst.id, "hello")
     system = recorder.systems[-1]
-    assert system.index("Be extremely concise.") < system.index("Always answer in Tajik")
+    assert system.index("Be extremely concise.") < system.index("language the user wrote")
 
 
-async def test_assistant_language_wins_over_the_callers_preference():
+async def test_an_assistant_language_setting_is_accepted_but_does_not_pin():
     plat, recorder = _platform()
     asst = plat.assistants.create(CEO, name="Tajik desk", language="tg")
     await plat.assistant_service.ask(CEO, asst.id, "hello", language="ru")
-    assert "Tajik" in recorder.systems[-1]
-
-
-async def test_an_auto_assistant_defers_to_the_caller():
-    plat, recorder = _platform()
-    asst = plat.assistants.create(CEO, name="Neutral", language="auto")
-    await plat.assistant_service.ask(CEO, asst.id, "hello", language="ru")
-    assert "Russian" in recorder.systems[-1]
+    assert "Always answer in Tajik" not in recorder.systems[-1]
+    assert "Always answer in Russian" not in recorder.systems[-1]
 
 
 # ---------- messenger bots ----------
@@ -129,7 +106,8 @@ async def test_a_messenger_binding_can_pin_a_language():
     await bot.handle(
         InboundMessage(platform="telegram", sender_id="42", chat_id="42", text="salom")
     )
-    assert "Tajik" in recorder.systems[-1]
+    # the binding still parses, but the answer follows the message's language
+    assert "language the user wrote" in recorder.systems[-1]
 
 
 def test_binding_language_parses_from_the_env_format(monkeypatch):

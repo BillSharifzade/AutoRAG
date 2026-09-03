@@ -3,7 +3,7 @@
 #     docker compose up --build
 #
 # Console  → http://localhost:3000   (sign in with a token from KARAG_TOKENS)
-# API      → http://localhost:8000   (/health, /v1/*, legacy console at /ui)
+# API      → http://localhost:8000   (/health, /v1/*)
 #
 # Provider keys and tokens come from .env — copy .env.example if you have none.
 # State lives in ./data, so it survives `docker compose down`.
@@ -19,6 +19,8 @@ x-api-env: &api-env
   KARAG_CHAT_DB: /data/karag_chats.db
   KARAG_USAGE_STORE: sqlite
   KARAG_USAGE_DB: /data/karag_usage.db
+  # uploaded database files (SQLite, imported SQL dumps) live next to the rest
+  KARAG_UPLOAD_DIR: /data/uploads
 
 services:
   api:

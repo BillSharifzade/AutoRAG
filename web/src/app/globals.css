@@ -28,40 +28,43 @@
   --red-500: #ec2336;
   --red-600: #c91526;
 
-  /* semantic tokens — light */
-  --bg: #f5f4f8;
-  --bg-deep: #edecf2;
-  --surface: #ffffff;
-  --surface-2: #f8f7fb;
-  --line: #e4e2ec;
-  --line-strong: #cbc8d8;
-  --ink: #232130;
-  --mut: #676279;
-  --faint: #9793a9;
+  /* semantic tokens — light.
+     Calm on purpose: no pure white, no saturated red on big areas. Surfaces
+     sit a few steps below white so text contrast comes from ink, not glare,
+     and the accent is used at chip/icon size, softened one notch. */
+  --bg: #ecebf0;
+  --bg-deep: #e3e2e9;
+  --surface: #f7f7fa;
+  --surface-2: #efeef3;
+  --line: #dcdae4;
+  --line-strong: #c3c0d0;
+  --ink: #2c2a37;
+  --mut: #6a667b;
+  --faint: #9591a6;
 
   /* red is THE accent: nav, icons, chips, focus, highlights */
-  --accent: var(--red-500);
-  --accent-hover: var(--red-600);
-  --accent-strong: #b3121f;
-  --accent-soft: #fdeaec;
-  --accent-soft-2: #fbd7db;
+  --accent: #d6293a;
+  --accent-hover: #bd1f2f;
+  --accent-strong: #a81a29;
+  --accent-soft: #f8e6e8;
+  --accent-soft-2: #f1d3d7;
   --accent-ink: #ffffff;
 
   --accent-2: var(--brand-700);
   --accent-2-soft: var(--brand-100);
 
-  --good: #0e7a55;
-  --good-soft: #e4f5ed;
-  --bad: #c22333;
-  --bad-soft: #fdeceb;
-  --warn: #92610c;
-  --warn-soft: #fdf3dd;
+  --good: #1f7a55;
+  --good-soft: #e3f1ea;
+  --bad: #b8303c;
+  --bad-soft: #f6e6e6;
+  --warn: #8a5f10;
+  --warn-soft: #f6efdc;
 
-  --glow: 0 0 0 1px rgb(236 35 54 / 0.3), 0 4px 24px -6px rgb(236 35 54 / 0.3);
-  --shadow-sm: 0 1px 2px rgb(35 33 48 / 0.05);
-  --shadow: 0 1px 2px rgb(35 33 48 / 0.04), 0 10px 32px -12px rgb(35 33 48 / 0.14);
-  --shadow-lg: 0 2px 4px rgb(35 33 48 / 0.05), 0 24px 48px -16px rgb(35 33 48 / 0.22);
-  --header-glass: rgb(255 255 255 / 0.5);
+  --glow: 0 0 0 1px rgb(214 41 58 / 0.22), 0 4px 20px -6px rgb(214 41 58 / 0.22);
+  --shadow-sm: 0 1px 2px rgb(35 33 48 / 0.04);
+  --shadow: 0 1px 2px rgb(35 33 48 / 0.03), 0 8px 24px -12px rgb(35 33 48 / 0.10);
+  --shadow-lg: 0 2px 4px rgb(35 33 48 / 0.04), 0 20px 40px -16px rgb(35 33 48 / 0.16);
+  --header-glass: rgb(247 247 250 / 0.6);
 }
 
 [data-theme="dark"] {
@@ -171,8 +174,8 @@ select:focus-visible {
 }
 
 ::selection {
-  background: var(--red-500);
-  color: #ffffff;
+  background: color-mix(in oklab, var(--accent) 28%, transparent);
+  color: inherit;
 }
 
 * {
@@ -183,8 +186,8 @@ select:focus-visible {
 /* ---- ambient background wash (subtle, brand-tinted) ---- */
 .app-wash {
   background:
-    radial-gradient(1100px 500px at 85% -10%, color-mix(in oklab, var(--brand-500) 10%, transparent), transparent 60%),
-    radial-gradient(900px 420px at -10% 110%, color-mix(in oklab, var(--red-500) 6%, transparent), transparent 60%),
+    radial-gradient(1100px 500px at 85% -10%, color-mix(in oklab, var(--brand-500) 7%, transparent), transparent 60%),
+    radial-gradient(900px 420px at -10% 110%, color-mix(in oklab, var(--accent) 4%, transparent), transparent 60%),
     var(--bg);
 }
 
@@ -201,7 +204,7 @@ select:focus-visible {
 
 /* secondary (red) gradient — reserved for the strongest call-to-action */
 .red-gradient {
-  background: linear-gradient(135deg, #ff4d5e 0%, var(--red-500) 55%, var(--red-600) 100%);
+  background: linear-gradient(135deg, color-mix(in oklab, var(--accent) 82%, white) 0%, var(--accent) 55%, var(--accent-hover) 100%);
 }
 
 .brand-text-gradient {

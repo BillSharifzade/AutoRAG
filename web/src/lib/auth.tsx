@@ -1,7 +1,11 @@
 "use client";
 
 /* Session state: the bearer token (localStorage-persisted), backend health,
-   and the theme toggle. One provider wraps the whole app. */
+   and the theme toggle. One provider wraps the whole app.
+
+   There is no "answer language" here any more — the assistant always answers
+   in the language of the question. The *interface* language lives in
+   `@/i18n` and is a browser preference, not an account one. */
 
 import {
   createContext,
@@ -11,7 +15,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, type Language, type Me } from "./api";
+import { api, type Me } from "./api";
 
 interface AuthState {
   token: string;
@@ -23,9 +27,6 @@ interface AuthState {
   toggleTheme: () => void;
   /** who this token is, once resolved — drives role-gated navigation */
   me: Me | null;
-  /** effective answer language; "auto" mirrors the question */
-  language: Language;
-  setLanguage: (l: Language) => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -36,7 +37,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [model, setModel] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [me, setMe] = useState<Me | null>(null);
-  const [language, setLanguageState] = useState<Language>("auto");
 
   /* localStorage does not exist while this renders on the server, so the token
      and theme cannot be seeded from it — the first client render has to match
@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => setModel(null));
   }, []);
 
-  // Identity drives which admin surfaces appear and which language is used.
+  // Identity drives which admin surfaces appear.
   useEffect(() => {
     // Signing out has to clear `me` too, but going through the promise keeps
     // that off the effect's synchronous path — and the guard below stops a
@@ -75,9 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let live = true;
     const lookup = token ? api.me(token).catch(() => null) : Promise.resolve(null);
     void lookup.then((m) => {
-      if (!live) return;
-      setMe(m);
-      if (m) setLanguageState(m.language);
+      if (live) setMe(m);
     });
     return () => {
       live = false;
@@ -95,17 +93,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMe(null);
   }, []);
 
-  const setLanguage = useCallback(
-    (l: Language) => {
-      setLanguageState(l); // optimistic: chat keeps working either way
-      if (!token) return;
-      // env-token sessions have no account row to persist to; the choice then
-      // simply travels with each request instead of being stored.
-      api.setLanguage(token, l).catch(() => {});
-    },
-    [token],
-  );
-
   const toggleTheme = useCallback(
     () => setTheme((t) => (t === "dark" ? "light" : "dark")),
     [],
@@ -113,10 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{
-        token, ready, model, connect, disconnect, theme, toggleTheme,
-        me, language, setLanguage,
-      }}
+      value={{ token, ready, model, connect, disconnect, theme, toggleTheme, me }}
     >
       {children}
     </AuthContext.Provider>

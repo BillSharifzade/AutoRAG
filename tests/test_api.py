@@ -37,14 +37,6 @@ def test_health(client):
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
 
-def test_ui_served(client):
-    for path in ("/", "/ui"):
-        r = client.get(path)
-        assert r.status_code == 200
-        assert "text/html" in r.headers["content-type"]
-        assert "KARAG" in r.text and "no-code" not in r.text.lower() or "Assistant" in r.text
-
-
 def test_skills_endpoint_reflects_rbac(client):
     # finance can see the finance skill; employee cannot
     fin = client.get("/v1/skills", headers=_auth("t_fin")).json()["skills"]
@@ -104,13 +96,6 @@ def test_assistants_flow(client):
     assert r.status_code == 200
 
 
-def test_builder_served(client):
-    r = client.get("/builder")
-    assert r.status_code == 200
-    assert "text/html" in r.headers["content-type"]
-    assert "Assistant Builder" in r.text
-
-
 def test_assistant_get_and_update(client):
     r = client.post("/v1/assistants",
                     json={"name": "Help", "instruction": "Be brief.",
@@ -121,12 +106,18 @@ def test_assistant_get_and_update(client):
     assert r.json()["allowed_skill_names"] == ["sales_by_store"]
     got = client.get(f"/v1/assistants/{aid}", headers=_auth("t_fin")).json()
     assert got["instruction"] == "Be brief."
-    # update: rename + widen back to "all" via empty list
+    # update: rename + widen back to "all" — null means "everything the person
+    # may use"; [] means "documents only" (the same words as on create)
     up = client.put(f"/v1/assistants/{aid}",
                     json={"name": "Helpdesk", "instruction": "Cite sources.",
-                          "allowed_skill_names": []},
+                          "allowed_skill_names": None},
                     headers=_auth("t_fin")).json()
     assert up["name"] == "Helpdesk" and up["allowed_skill_names"] is None
+    only_docs = client.put(f"/v1/assistants/{aid}",
+                           json={"allowed_skill_names": []},
+                           headers=_auth("t_fin")).json()
+    assert only_docs["allowed_skill_names"] == []
+    assert only_docs["instruction"] == "Cite sources."  # partial update keeps the rest
     # updating an unknown id is a 404, not a disclosure
     assert client.put("/v1/assistants/asst_missing", json={"name": "x"},
                       headers=_auth("t_fin")).status_code == 404

@@ -2,8 +2,6 @@
 
 Endpoints (all /v1/* except the webhooks require a bearer token):
   GET  /health
-  GET  /ui                    — the operator console (SPA)
-  GET  /builder               — the no-code assistant builder (SPA)
   POST /v1/ingest             (ingest role) — add a text document
   POST /v1/ingest/file        (ingest role) — upload .docx/.xlsx/.pptx/.pdf/.csv/…
   POST /v1/ask                — knowledge + data answer
@@ -24,9 +22,11 @@ can offer them for download; their bytes never went through the model.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
+import logging
 from dataclasses import asdict
-from pathlib import Path
 
 import os
 
@@ -41,13 +41,13 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
-_UI_HTML = (Path(__file__).parent / "ui.html").read_text(encoding="utf-8")
-_BUILDER_HTML = (Path(__file__).parent / "builder.html").read_text(encoding="utf-8")
+log = logging.getLogger("karag.api")
 
 from ..alerts import ConsoleNotifier
+from ..assistants import AssistantNotFound, can_manage
 from ..audit import AuditEvent
 from ..engineer.guard import ENGINEER_ROLE
 from ..conversations import Conversation, StoredMessage
@@ -56,7 +56,13 @@ from ..selfknowledge.handbook import guides_for, onboarding_prompt
 from ..knowledge.classify import suggest_data_class
 from ..rbac import INGEST_ROLES, visible_classes
 from ..domain import Answer, DataClass, Principal
-from ..errors import AccessDenied, KaragError, NotFoundError, ValidationError
+from ..errors import (
+    AccessDenied,
+    GenerationError,
+    KaragError,
+    NotFoundError,
+    ValidationError,
+)
 from ..llm.base import ChatMessage, MsgRole
 from ..factory import Platform, build_platform
 from ..ingestion.readers import UnsupportedFormat, extract_text
@@ -180,8 +186,20 @@ async def _resolve_attachments(req: AskRequest) -> tuple[str, list[ImagePart]]:
 class AssistantRequest(BaseModel):
     name: str
     instruction: str = ""
+    # null = every skill the person may already use; [] = documents only;
+    # a list = exactly those (still intersected with what the person may use)
     allowed_skill_names: list[str] | None = None
+    # accepted for compatibility — answers always follow the question's language
     language: str = "auto"
+
+
+class AssistantUpdateRequest(BaseModel):
+    """Every field optional: what is omitted stays as it was."""
+
+    name: str | None = None
+    instruction: str | None = None
+    allowed_skill_names: list[str] | None = None
+    language: str | None = None
 
 
 class ConnectorRequest(BaseModel):
@@ -213,6 +231,9 @@ class SkillDefinitionRequest(BaseModel):
     row_limit: int | None = None
     inject_tenant: bool = True
     shared: bool = False
+    # None on update = leave as is; a disabled skill stays stored but is not
+    # offered to the model
+    enabled: bool | None = None
 
     def resource_tuple(self) -> tuple[SkillResource, ...]:
         return tuple(SkillResource(path=r.path, content=r.content) for r in self.resources)
@@ -284,19 +305,68 @@ class ChatRenameRequest(BaseModel):
     title: str
 
 
-# How many prior messages of a thread to replay as model context.
+# How many prior messages of a thread to replay as model context, and how much
+# text at most — a message cap alone lets twelve long answers fill the prompt.
 _HISTORY_LIMIT = 24
+_HISTORY_CHARS = 40_000
+# Stored turns that are not part of the conversation's substance.
+_NON_CONTENT_PLANES = ("error", "stopped")
 
 
 def _history_messages(conv: Conversation) -> list[ChatMessage]:
-    """Prior turns as neutral chat messages for conversational memory."""
-    msgs: list[ChatMessage] = []
-    for m in conv.messages[-_HISTORY_LIMIT:]:
+    """Prior turns as neutral chat messages for conversational memory.
+
+    Newest first until the character budget is spent, so what the model
+    forgets is always the oldest part of a long thread. Failed and stopped
+    turns are not replayed: an error message is not something to build on.
+    """
+    picked: list[StoredMessage] = []
+    total = 0
+    for m in reversed(conv.messages[-_HISTORY_LIMIT:]):
         if not m.text.strip():
             continue
-        role = MsgRole.USER if m.role == "user" else MsgRole.ASSISTANT
-        msgs.append(ChatMessage(role=role, content=m.text))
-    return msgs
+        if m.answer and m.answer.get("plane") in _NON_CONTENT_PLANES:
+            continue
+        total += len(m.text)
+        if total > _HISTORY_CHARS and picked:
+            break
+        picked.append(m)
+    picked.reverse()
+    # The replay must start with the user, or the provider rejects the turn order.
+    while picked and picked[0].role != "user":
+        picked.pop(0)
+    return [
+        ChatMessage(
+            role=MsgRole.USER if m.role == "user" else MsgRole.ASSISTANT,
+            content=m.text,
+        )
+        for m in picked
+    ]
+
+
+def _failure_text(exc: BaseException) -> str:
+    """What a failed turn leaves in the thread — a reason, not a stack trace."""
+    if isinstance(exc, GenerationError):
+        return "The model could not be reached for this message. Please try again."
+    if isinstance(exc, AccessDenied):
+        return "This request touched something outside your access."
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return "The answer could not be produced. Please try again."
+
+
+def _status_for(exc: BaseException) -> int:
+    if isinstance(exc, HTTPException):
+        return exc.status_code
+    if isinstance(exc, AccessDenied):
+        return 403
+    if isinstance(exc, ValidationError):
+        return 400
+    if isinstance(exc, NotFoundError):
+        return 404
+    if isinstance(exc, GenerationError):
+        return 502
+    return 500
 
 
 def _stored_answer(answer: Answer) -> dict:
@@ -322,7 +392,7 @@ def _stored_answer(answer: Answer) -> dict:
     }
 
 
-def _assistant_payload(a) -> dict:
+def _assistant_payload(a, principal: Principal | None = None) -> dict:
     return {
         "id": a.id,
         "name": a.name,
@@ -331,6 +401,8 @@ def _assistant_payload(a) -> dict:
             sorted(a.allowed_skill_names) if a.allowed_skill_names is not None else None
         ),
         "language": a.language,
+        "created_by": a.created_by,
+        "can_edit": can_manage(principal, a) if principal is not None else False,
     }
 
 
@@ -382,7 +454,23 @@ def create_app(
     async def _missing(_request: Request, exc: NotFoundError):
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
-    def principal_from(
+    @app.exception_handler(GenerationError)
+    async def _provider_down(_request: Request, exc: GenerationError):
+        log.warning("generation failed: %s", exc)
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    @app.exception_handler(KaragError)
+    async def _platform_error(_request: Request, exc: KaragError):
+        # Anything typed but not mapped above is still a JSON error with a
+        # reason, never a bare 500 page.
+        log.exception("unhandled platform error")
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+    # Async on purpose: a plain ``def`` dependency runs in a worker thread with
+    # a *copy* of the request context, so the ContextVar set below would be
+    # lost before the endpoint ran — every audit event then recorded an empty
+    # address and role. That was a real bug.
+    async def principal_from(
         request: Request, authorization: str = Header(default="")
     ) -> Principal:
         if not authorization.lower().startswith("bearer "):
@@ -456,14 +544,10 @@ def create_app(
             )
         return {"language": req.language}
 
-    @app.get("/", response_class=HTMLResponse)
-    @app.get("/ui", response_class=HTMLResponse)
-    async def ui() -> str:
-        return _UI_HTML
-
-    @app.get("/builder", response_class=HTMLResponse)
-    async def builder() -> str:
-        return _BUILDER_HTML
+    @app.get("/")
+    async def root() -> dict:
+        # The console is the Next.js app (web/); the API itself has no pages.
+        return {"service": "karag", "console": "web/ on :3000", "health": "/health"}
 
     @app.get("/v1/skills")
     async def list_skills(principal: Principal = Depends(principal_from)) -> dict:
@@ -545,7 +629,8 @@ def create_app(
             instructions=req.instructions, resources=req.resource_tuple(),
             required_data_class=req.required_data_class,
             required_roles=tuple(req.required_roles), row_limit=req.row_limit,
-            shared=req.shared,
+            inject_tenant=req.inject_tenant, shared=req.shared,
+            enabled=req.enabled,
         )
         return defn.to_dict()
 
@@ -792,7 +877,10 @@ def create_app(
             )
         except AccessDenied as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        return {"document_id": doc.id, "data_class": doc.data_class.value}
+        return {
+            "document_id": doc.id, "data_class": doc.data_class.value,
+            "replaced": doc.metadata.get("replaced", []),
+        }
 
     @app.post("/v1/ingest/file")
     async def ingest_file(
@@ -810,7 +898,10 @@ def create_app(
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except UnsupportedFormat as exc:
             raise HTTPException(status_code=415, detail=str(exc)) from exc
-        return {"document_id": doc.id, "data_class": doc.data_class.value}
+        return {
+            "document_id": doc.id, "data_class": doc.data_class.value,
+            "replaced": doc.metadata.get("replaced", []),
+        }
 
     @app.get("/v1/documents")
     async def list_documents(principal: Principal = Depends(principal_from)) -> dict:
@@ -881,68 +972,76 @@ def create_app(
     async def create_assistant(
         req: AssistantRequest, principal: Principal = Depends(principal_from)
     ) -> dict:
+        if not req.name.strip():
+            raise HTTPException(status_code=400, detail="an assistant needs a name")
         allowed = frozenset(req.allowed_skill_names) if req.allowed_skill_names is not None else None
         a = plat.assistants.create(
-            principal, name=req.name, instruction=req.instruction,
+            principal, name=req.name.strip(), instruction=req.instruction,
             allowed_skill_names=allowed, language=req.language,
         )
-        return _assistant_payload(a)
+        return _assistant_payload(a, principal)
 
     @app.get("/v1/assistants")
     async def list_assistants(principal: Principal = Depends(principal_from)) -> dict:
         return {"assistants": [
-            _assistant_payload(a) for a in plat.assistants.list_for(principal)
+            _assistant_payload(a, principal) for a in plat.assistants.list_for(principal)
         ]}
 
     @app.get("/v1/assistants/{assistant_id}")
     async def get_assistant(
         assistant_id: str, principal: Principal = Depends(principal_from)
     ) -> dict:
-        try:
-            a = plat.assistants.get(principal, assistant_id)
-        except KaragError as exc:
-            raise HTTPException(status_code=404, detail="assistant not found") from exc
-        return _assistant_payload(a)
+        return _assistant_payload(plat.assistants.get(principal, assistant_id), principal)
 
     @app.put("/v1/assistants/{assistant_id}")
     async def update_assistant(
         assistant_id: str,
-        req: AssistantRequest,
+        req: AssistantUpdateRequest,
         principal: Principal = Depends(principal_from),
     ) -> dict:
-        # allowed_skill_names: null => "all you can see", [] treated the same way.
-        clear = req.allowed_skill_names is None or len(req.allowed_skill_names) == 0
-        allowed = None if clear else frozenset(req.allowed_skill_names)
-        try:
-            a = plat.assistants.update(
-                principal, assistant_id,
-                name=req.name, instruction=req.instruction,
-                allowed_skill_names=allowed, clear_allowed=clear,
-                language=req.language,
-            )
-        except KaragError as exc:
-            raise HTTPException(status_code=404, detail="assistant not found") from exc
-        return _assistant_payload(a)
+        """Partial update. ``allowed_skill_names`` keeps the create semantics:
+        omitted = unchanged, null = every skill the person may use, [] =
+        documents only, a list = exactly those."""
+        current = plat.assistants.get(principal, assistant_id)  # 404 across tenants
+        if not can_manage(principal, current):
+            raise AccessDenied("only the person who made this assistant, or an administrator, can change it")
+        sent = req.model_fields_set
+        clear = "allowed_skill_names" in sent and req.allowed_skill_names is None
+        allowed = (
+            frozenset(req.allowed_skill_names)
+            if "allowed_skill_names" in sent and req.allowed_skill_names is not None
+            else None
+        )
+        if req.name is not None and not req.name.strip():
+            raise HTTPException(status_code=400, detail="an assistant needs a name")
+        a = plat.assistants.update(
+            principal, assistant_id,
+            name=req.name.strip() if req.name is not None else None,
+            instruction=req.instruction,
+            allowed_skill_names=allowed, clear_allowed=clear,
+            language=req.language,
+        )
+        return _assistant_payload(a, principal)
 
     @app.delete("/v1/assistants/{assistant_id}")
     async def delete_assistant(
         assistant_id: str, principal: Principal = Depends(principal_from)
     ) -> dict:
-        plat.assistants.delete(principal, assistant_id)  # 404s across tenants
+        current = plat.assistants.get(principal, assistant_id)  # 404s across tenants
+        if not can_manage(principal, current):
+            raise AccessDenied("only the person who made this assistant, or an administrator, can delete it")
+        plat.assistants.delete(principal, assistant_id)
         return {"deleted": assistant_id}
 
     @app.post("/v1/assistants/{assistant_id}/ask")
     async def ask_assistant(
         assistant_id: str, req: AskRequest, principal: Principal = Depends(principal_from)
     ) -> dict:
-        try:
-            query, images = await _resolve_attachments(req)
-            answer = await plat.assistant_service.ask(
-                principal, assistant_id, query, images=images or None,
-                language=language_for(principal, req.language),
-            )
-        except KaragError as exc:
-            raise HTTPException(status_code=404, detail="assistant not found") from exc
+        query, images = await _resolve_attachments(req)
+        answer = await plat.assistant_service.ask(
+            principal, assistant_id, query, images=images or None,
+            language=language_for(principal, req.language),
+        )
         return _answer_payload(answer)
 
     # --- Chat history (saved conversations, per principal) ----------------
@@ -993,24 +1092,34 @@ def create_app(
             raise HTTPException(status_code=404, detail="chat not found")
         return {"deleted": chat_id}
 
-    @app.post("/v1/chats/{chat_id}/ask")
-    async def chat_ask(
-        chat_id: str, req: AskRequest, principal: Principal = Depends(principal_from)
+    async def _chat_turn(
+        principal: Principal,
+        conv: Conversation,
+        req: AskRequest,
+        query: str,
+        images: list[ImagePart],
+        on_event=None,
     ) -> dict:
-        owner = (principal.tenant_id, principal.user_id)
-        conv = plat.conversations.get(owner, chat_id)
-        if conv is None:
-            raise HTTPException(status_code=404, detail="chat not found")
+        """One turn of a saved conversation, shared by the JSON and the
+        streaming endpoint.
 
-        query, images = await _resolve_attachments(req)
+        The persona is never quietly dropped: a failure inside the assistant
+        path is reported as a failure. The one exception is an assistant that
+        has since been deleted — the thread then continues with the default
+        persona and says so in the response (``assistant_missing``).
+
+        Whatever happens after the user's message is stored, the thread ends
+        up consistent: a failed or stopped turn leaves a short assistant note
+        rather than an orphaned question.
+        """
+        owner = (principal.tenant_id, principal.user_id)
         history = _history_messages(conv)
         language = language_for(principal, req.language)
 
-        # persist the user's turn (as typed) with attachment descriptors
         display = req.query.strip() or query
         plat.conversations.append(
             owner,
-            chat_id,
+            conv.id,
             StoredMessage(
                 role="user",
                 text=display,
@@ -1020,41 +1129,138 @@ def create_app(
             ),
         )
 
-        if conv.assistant_id:
-            try:
-                answer = await plat.assistant_service.ask(
-                    principal, conv.assistant_id, query,
-                    images=images or None, history=history, language=language,
-                )
-            except KaragError:
+        assistant_missing = False
+        try:
+            if conv.assistant_id:
+                try:
+                    answer = await plat.assistant_service.ask(
+                        principal, conv.assistant_id, query,
+                        images=images or None, history=history, language=language,
+                        on_event=on_event,
+                    )
+                except AssistantNotFound:
+                    assistant_missing = True
+                    answer = await plat.orchestrator.ask(
+                        principal, query, images=images or None, history=history,
+                        language=language, on_event=on_event,
+                    )
+            else:
                 answer = await plat.orchestrator.ask(
                     principal, query, images=images or None, history=history,
-                    language=language,
+                    language=language, on_event=on_event,
                 )
-        else:
-            answer = await plat.orchestrator.ask(
-                principal, query, images=images or None, history=history,
-                language=language,
+        except asyncio.CancelledError:
+            plat.conversations.append(
+                owner, conv.id,
+                StoredMessage(
+                    role="assistant", text="(stopped before an answer arrived)",
+                    answer={"plane": "stopped"},
+                ),
             )
+            raise
+        except Exception as exc:
+            plat.conversations.append(
+                owner, conv.id,
+                StoredMessage(
+                    role="assistant", text=_failure_text(exc),
+                    answer={"plane": "error", "error": str(exc)[:500]},
+                ),
+            )
+            raise
 
         plat.conversations.append(
             owner,
-            chat_id,
+            conv.id,
             StoredMessage(
                 role="assistant", text=answer.text, answer=_stored_answer(answer)
             ),
         )
 
-        refreshed = plat.conversations.get(owner, chat_id)
+        refreshed = plat.conversations.get(owner, conv.id)
         return {
             "answer": _answer_payload(answer),
             "title": refreshed.title if refreshed else conv.title,
             "updated_at": refreshed.updated_at if refreshed else None,
+            "assistant_missing": assistant_missing,
         }
+
+    @app.post("/v1/chats/{chat_id}/ask")
+    async def chat_ask(
+        chat_id: str, req: AskRequest, principal: Principal = Depends(principal_from)
+    ) -> dict:
+        owner = (principal.tenant_id, principal.user_id)
+        conv = plat.conversations.get(owner, chat_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        query, images = await _resolve_attachments(req)
+        return await _chat_turn(principal, conv, req, query, images)
+
+    @app.post("/v1/chats/{chat_id}/stream")
+    async def chat_stream(
+        chat_id: str, req: AskRequest, principal: Principal = Depends(principal_from)
+    ):
+        """The same turn as ``/ask``, delivered as Server-Sent Events.
+
+        Events (one JSON object per ``data:`` line):
+          status  {stage: retrieving|thinking}
+          tool    {name, status: start|done|error}
+          delta   {text}            — answer text as the model writes it
+          done    {answer, title, updated_at, assistant_missing}
+          error   {status, detail}
+
+        Closing the connection cancels the turn server-side: nothing keeps
+        running — or being billed — for a reader who has gone.
+        """
+        owner = (principal.tenant_id, principal.user_id)
+        conv = plat.conversations.get(owner, chat_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="chat not found")
+        query, images = await _resolve_attachments(req)
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def on_event(event: dict) -> None:
+            await queue.put(event)
+
+        async def run() -> None:
+            try:
+                result = await _chat_turn(principal, conv, req, query, images, on_event)
+                await queue.put({"type": "done", **result})
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — reported to the client
+                if _status_for(exc) >= 500:
+                    log.exception("chat turn failed")
+                await queue.put({
+                    "type": "error",
+                    "status": _status_for(exc),
+                    "detail": _failure_text(exc),
+                })
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run())
+
+        async def events():
+            try:
+                while True:
+                    event = await queue.get()
+                    if event is None:
+                        break
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            finally:
+                if not task.done():
+                    task.cancel()
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/v1/audit")
     async def audit(principal: Principal = Depends(principal_from)) -> dict:
-        if "admin" not in principal.roles:
+        if not principal.has_any_role(frozenset({"admin", "ceo"})):
             raise HTTPException(status_code=403, detail="admin role required")
         # Both the in-memory and the durable sink expose for_tenant(); a
         # write-only sink (JSONL, null) has no query path and says so.
@@ -1132,6 +1338,11 @@ def create_app(
             reply = await bot_svc.handle(msg)
             replies.append({"to": msg.chat_id, "text": reply})
         return {"replies": replies}
+
+    # --- guided integrations: API sources and databases ---------------------
+    from .integrations import mount_integrations  # noqa: PLC0415
+
+    mount_integrations(app, plat, principal_from)
 
     return app
 

@@ -58,9 +58,15 @@ async def main() -> None:
         audit=platform.audit, tick_s=tick,
     )
 
+    stopping = asyncio.Event()
+
+    def stop() -> None:
+        scheduler.stop()
+        stopping.set()
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, scheduler.stop)
+        loop.add_signal_handler(sig, stop)
 
     rules = platform.alerts.list_all()
     print(
@@ -68,7 +74,25 @@ async def main() -> None:
         f"channels: {', '.join(sorted(build_notifiers()))}",
         flush=True,
     )
-    await scheduler.run_forever()
+
+    async def sync_sources() -> None:
+        """Refresh API data sources whose interval has elapsed (hourly by default)."""
+        while not stopping.is_set():
+            try:
+                for outcome in await platform.sources.run_due():
+                    print(
+                        f"[karag-scheduler] source {outcome.source_id}: {outcome.status}"
+                        + (f" ({outcome.error})" if outcome.error else ""),
+                        flush=True,
+                    )
+            except Exception as exc:  # noqa: BLE001 — one bad pass must not end the loop
+                print(f"[karag-scheduler] source sync pass failed: {exc}", flush=True)
+            try:
+                await asyncio.wait_for(stopping.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
+
+    await asyncio.gather(scheduler.run_forever(), sync_sources())
     print("[karag-scheduler] stopped", flush=True)
 
 

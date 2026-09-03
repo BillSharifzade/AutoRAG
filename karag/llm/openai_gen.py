@@ -91,6 +91,7 @@ class OpenAIGenerator:
         system: str,
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
+        on_delta=None,  # accepted for interface parity; this adapter does not stream
     ) -> LLMResponse:
         if not self._api_key:
             raise ConfigError("OPENAI_API_KEY is not set")

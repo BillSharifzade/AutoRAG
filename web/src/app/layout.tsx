@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 import { ChatProvider } from "@/lib/chat-store";
+import { LocaleProvider } from "@/i18n";
 import { Shell } from "@/components/shell";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
@@ -36,7 +37,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
-      lang="en"
+      lang="ru"
       suppressHydrationWarning
       className={`${inter.variable} ${grotesk.variable} ${jbmono.variable} h-full antialiased`}
     >
@@ -44,13 +45,15 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
       <body className="app-wash min-h-full">
-        <AuthProvider>
-          {/* Above the router on purpose: the open conversation has to outlive
-              a trip to Documents and back. */}
-          <ChatProvider>
-            <Shell>{children}</Shell>
-          </ChatProvider>
-        </AuthProvider>
+        <LocaleProvider>
+          <AuthProvider>
+            {/* Above the router on purpose: the open conversation has to outlive
+                a trip to Documents and back. */}
+            <ChatProvider>
+              <Shell>{children}</Shell>
+            </ChatProvider>
+          </AuthProvider>
+        </LocaleProvider>
       </body>
     </html>
   );

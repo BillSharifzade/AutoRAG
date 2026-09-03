@@ -7,13 +7,14 @@
  * Chat in the app sidebar — the same place every other destination lives — so
  * the thread itself gets the middle of the screen. */
 
-import { Check, MessageSquarePlus, MessageSquareText, Pencil, Trash2, X } from "lucide-react";
+import { Bot, Check, MessageSquarePlus, MessageSquareText, Pencil, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { ChatSummary } from "@/lib/api";
+import { useT } from "@/i18n";
 import { ChatListSkeleton } from "@/components/skeleton";
 
-const GROUP_ORDER = ["Today", "Yesterday", "Previous 7 days", "Older"] as const;
+const GROUP_ORDER = ["today", "yesterday", "week", "older"] as const;
 type GroupName = (typeof GROUP_ORDER)[number];
 
 function groupSessions(sessions: ChatSummary[]): Record<GroupName, ChatSummary[]> {
@@ -22,17 +23,17 @@ function groupSessions(sessions: ChatSummary[]): Record<GroupName, ChatSummary[]
   const t0 = start.getTime();
   const day = 86400000;
   const out: Record<GroupName, ChatSummary[]> = {
-    Today: [],
-    Yesterday: [],
-    "Previous 7 days": [],
-    Older: [],
+    today: [],
+    yesterday: [],
+    week: [],
+    older: [],
   };
   for (const s of sessions) {
     const d = s.updated_at * 1000;
-    if (d >= t0) out.Today.push(s);
-    else if (d >= t0 - day) out.Yesterday.push(s);
-    else if (d >= t0 - 7 * day) out["Previous 7 days"].push(s);
-    else out.Older.push(s);
+    if (d >= t0) out.today.push(s);
+    else if (d >= t0 - day) out.yesterday.push(s);
+    else if (d >= t0 - 7 * day) out.week.push(s);
+    else out.older.push(s);
   }
   return out;
 }
@@ -50,6 +51,7 @@ function RailItem({
   onRename: (title: string) => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [draft, setDraft] = useState(s.title);
@@ -93,11 +95,14 @@ function RailItem({
           title={s.title}
         >
           <span
-            className={`block truncate text-[12.5px] ${
+            className={`flex items-center gap-1.5 text-[12.5px] ${
               active ? "font-semibold text-accent-strong" : "text-mut"
             }`}
           >
-            {s.title}
+            {s.assistant_id && (
+              <Bot className="size-3 shrink-0 text-faint" aria-label={t("chat.usesAssistant")} />
+            )}
+            <span className="truncate">{s.title}</span>
           </span>
         </button>
       )}
@@ -114,14 +119,14 @@ function RailItem({
                 className="flex items-center gap-0.5 rounded-md bg-surface px-0.5 shadow-[var(--shadow-sm)]"
               >
                 <button
-                  title="Confirm delete"
+                  title={t("chat.confirmDelete")}
                   onClick={onDelete}
                   className="grid size-6 cursor-pointer place-items-center rounded text-bad hover:bg-bad-soft"
                 >
                   <Check className="size-3" />
                 </button>
                 <button
-                  title="Cancel"
+                  title={t("common.cancel")}
                   onClick={() => setConfirming(false)}
                   className="grid size-6 cursor-pointer place-items-center rounded text-mut hover:bg-surface-2"
                 >
@@ -131,7 +136,7 @@ function RailItem({
             ) : (
               <div className="hidden items-center gap-0.5 pr-0.5 group-hover:flex">
                 <button
-                  title="Rename"
+                  title={t("chat.rename")}
                   onClick={() => {
                     setDraft(s.title);
                     setEditing(true);
@@ -141,7 +146,7 @@ function RailItem({
                   <Pencil className="size-3" />
                 </button>
                 <button
-                  title="Delete"
+                  title={t("common.delete")}
                   onClick={() => setConfirming(true)}
                   className="grid size-6 cursor-pointer place-items-center rounded text-faint hover:bg-surface hover:text-bad"
                 >
@@ -173,31 +178,33 @@ export function ChatHistory({
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const t = useT();
   const groups = groupSessions(sessions);
   return (
-    <div className="flex min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <button
         onClick={onNew}
         className="mb-2 flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12.5px] font-semibold transition-colors hover:border-accent/50 hover:text-accent-strong"
       >
-        <MessageSquarePlus className="size-3.5 text-accent" /> New chat
+        <MessageSquarePlus className="size-3.5 text-accent" /> {t("chat.new")}
       </button>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+      {/* The list scrolls inside its own box — the New button above stays put
+          and the rest of the sidebar never moves, however long the history. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
         {loading ? (
           <ChatListSkeleton rows={4} />
         ) : sessions.length === 0 ? (
           <p className="px-2.5 py-3 text-[11.5px] leading-relaxed text-faint">
             <MessageSquareText className="mb-1 size-3.5" />
-            Ask something and it&rsquo;s saved here, so you can pick the
-            conversation back up later.
+            {t("chat.empty")}
           </p>
         ) : (
           <div className="flex flex-col gap-3">
             {GROUP_ORDER.filter((g) => groups[g].length > 0).map((g) => (
               <div key={g}>
                 <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-faint">
-                  {g}
+                  {t(`chat.group.${g}`)}
                 </p>
                 <div className="flex flex-col gap-0.5">
                   <AnimatePresence initial={false}>

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# KARAG API image: every /v1/* endpoint, plus the legacy console at /ui and the
-# skill builder at /builder. The Next.js console has its own image in web/.
+# KARAG API image: every /v1/* endpoint. The console is the Next.js app, which
+# has its own image in web/.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -14,7 +14,7 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY karag ./karag
 RUN pip install --no-cache-dir -U pip \
-    && pip install --no-cache-dir ".[api,anthropic,ollama,pgvector,ingestion]"
+    && pip install --no-cache-dir ".[api,anthropic,ollama,pgvector,mysql,secrets,ingestion]"
 
 COPY scripts ./scripts
 COPY sql ./sql

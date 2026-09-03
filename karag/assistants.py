@@ -29,6 +29,18 @@ class AssistantNotFound(NotFoundError):
     pass
 
 
+# Anyone in the tenant may *use* an assistant; changing or deleting one is for
+# whoever made it and for the roles that shape the company's tooling.
+MANAGE_ROLES: frozenset[str] = frozenset({"admin", "skill_author", "ceo"})
+
+
+def can_manage(principal: Principal, assistant: "Assistant") -> bool:
+    return (
+        assistant.created_by == principal.user_id
+        or principal.has_any_role(MANAGE_ROLES)
+    )
+
+
 @dataclass
 class Assistant:
     id: str
@@ -270,13 +282,13 @@ class AssistantService:
         images: list["ImagePart"] | None = None,
         history: list["ChatMessage"] | None = None,
         language: str | None = None,
+        on_event=None,
     ) -> Answer:
         assistant = self._registry.get(principal, assistant_id)  # tenant-checked
         if assistant.tenant_id != principal.tenant_id:  # defense in depth
             raise AccessDenied("assistant belongs to another tenant")
-        # An assistant pinned to a language wins over the caller's preference —
-        # a "Customer replies (Tajik)" assistant should stay Tajik.
-        effective = assistant.language if assistant.language != "auto" else language
+        # The answer follows the question's language; the stored ``language``
+        # is kept for compatibility and no longer pins anything.
         return await self._orchestrator.ask(
             principal,
             query,
@@ -284,5 +296,6 @@ class AssistantService:
             allowed_skill_names=assistant.allowed_skill_names,
             images=images,
             history=history,
-            language=effective,
+            language=language,
+            on_event=on_event,
         )

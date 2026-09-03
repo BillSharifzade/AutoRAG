@@ -5,7 +5,15 @@
  * leads and store managers, so the screen speaks their language instead and
  * translates at the edge. The API contract is untouched: these are labels.
  *
- * One place, so "operational" reads as "Staff" on every page. */
+ * One place, so "operational" reads as "Staff" / «Сотрудники» on every page.
+ * Every helper reads the active interface language, so a component can keep
+ * calling `audience(v).label` without threading a locale through. */
+
+import { activeLocale, translate, type Locale } from "@/i18n";
+
+function tr(key: string, vars?: Record<string, string | number>, locale?: Locale): string {
+  return translate(locale ?? activeLocale(), key, vars);
+}
 
 /* ---------- who can see this (API: data_class) ---------- */
 
@@ -22,46 +30,33 @@ export interface Audience {
   level: number;
 }
 
-export const AUDIENCES: Audience[] = [
-  {
-    value: "public",
-    label: "Everyone",
-    who: "Anyone at your company can see this.",
-    dot: "var(--good)",
-    level: 1,
-  },
-  {
-    value: "operational",
-    label: "Staff",
-    who: "Employees and managers. Not visible to outside accounts.",
-    dot: "var(--accent-2)",
-    level: 2,
-  },
-  {
-    value: "hr",
-    label: "HR only",
-    who: "People records — only HR and leadership.",
-    dot: "var(--warn)",
-    level: 3,
-  },
-  {
-    value: "financial",
-    label: "Finance only",
-    who: "Money and numbers — only finance and leadership.",
-    dot: "var(--accent)",
-    level: 4,
-  },
-  {
-    value: "regulated",
-    label: "Restricted",
-    who: "The most sensitive material. Almost no one sees this.",
-    dot: "var(--bad)",
-    level: 5,
-  },
-];
+const AUDIENCE_BASE = [
+  { value: "public", dot: "var(--good)", level: 1 },
+  { value: "operational", dot: "var(--accent-2)", level: 2 },
+  { value: "hr", dot: "var(--warn)", level: 3 },
+  { value: "financial", dot: "var(--accent)", level: 4 },
+  { value: "regulated", dot: "var(--bad)", level: 5 },
+] as const;
 
-export function audience(value: string | null | undefined): Audience {
-  return AUDIENCES.find((a) => a.value === value) ?? AUDIENCES[1];
+function audienceFor(base: (typeof AUDIENCE_BASE)[number], locale?: Locale): Audience {
+  return {
+    ...base,
+    label: tr(`aud.${base.value}.label`, undefined, locale),
+    who: tr(`aud.${base.value}.who`, undefined, locale),
+  };
+}
+
+/** The five audiences in the active language, least → most restricted. */
+export function audiences(locale?: Locale): Audience[] {
+  return AUDIENCE_BASE.map((b) => audienceFor(b, locale));
+}
+
+/** @deprecated read `audiences()` inside a component so the language is current */
+export const AUDIENCES: Audience[] = audiences("en");
+
+export function audience(value: string | null | undefined, locale?: Locale): Audience {
+  const base = AUDIENCE_BASE.find((a) => a.value === value) ?? AUDIENCE_BASE[1];
+  return audienceFor(base, locale);
 }
 
 /* ---------- who someone is (API: role) ---------- */
@@ -72,20 +67,23 @@ export interface RoleWord {
   who: string;
 }
 
-export const ROLES: RoleWord[] = [
-  { value: "employee", label: "Employee", who: "Everyday access to shared knowledge." },
-  { value: "hr", label: "HR", who: "Can also see people records." },
-  { value: "finance", label: "Finance", who: "Can also see financial figures." },
-  { value: "skill_author", label: "Data author", who: "Can also set up live data lookups." },
-  { value: "admin", label: "Administrator", who: "Manages people and settings for this company." },
-  { value: "ceo", label: "Leadership", who: "Sees everything belonging to this company." },
-  { value: "platform_admin", label: "Platform operator", who: "Runs KARAG itself, across all companies." },
-  { value: "karag_engineer", label: "Platform engineer", who: "May propose changes to KARAG's own code." },
-];
+export const ROLE_VALUES = [
+  "employee", "hr", "finance", "skill_author", "admin", "ceo",
+  "platform_admin", "karag_engineer",
+] as const;
 
-export function role(value: string): RoleWord {
-  const known = ROLES.find((r) => r.value === value);
-  if (known) return known;
+export function roles(locale?: Locale): RoleWord[] {
+  return ROLE_VALUES.map((v) => role(v, locale));
+}
+
+/** @deprecated read `roles()` inside a component so the language is current */
+export const ROLES: RoleWord[] = roles("en");
+
+export function role(value: string, locale?: Locale): RoleWord {
+  const label = tr(`role.${value}`, undefined, locale);
+  if (label !== `role.${value}`) {
+    return { value, label, who: tr(`role.${value}.who`, undefined, locale) };
+  }
   // A role the UI hasn't been taught yet still has to read as a name.
   const words = value.replace(/_/g, " ");
   return {
@@ -105,44 +103,14 @@ export function roleLabel(value: string): string {
    audit table and the `_log(principal, "...")` call sites, not guessed.
    Whether it was allowed lives in `decision`, so these are phrased neutrally
    and the screen adds the refusal. */
-const ACTIONS: Record<string, string> = {
-  ask: "asked a question",
-  retrieve: "searched the knowledge base",
-  ingest: "added knowledge",
-  document_delete: "removed a document",
-
-  skill_execute: "looked up live data",
-  skill_test: "tested a lookup",
-  skill_create: "created a lookup",
-  skill_update: "changed a lookup",
-  skill_delete: "removed a lookup",
-  skill_get: "opened a lookup",
-  skill_list: "listed the lookups",
-
-  connector_create: "connected a data source",
-  connector_delete: "disconnected a data source",
-  connector_list: "listed the data sources",
-
-  library_import: "copied a shared lookup",
-  library_list: "browsed shared lookups",
-
-  alert_create: "created an alert",
-  alert_delete: "deleted an alert",
-  alert_run: "ran an alert",
-  alert_tick: "checked an alert on schedule",
-
-  code_propose: "proposed a change to KARAG",
-  code_apply: "applied a change to KARAG",
-  code_discard: "discarded a proposed change",
-};
-
 export function actionWords(action: string): string {
-  if (ACTIONS[action]) return ACTIONS[action];
+  const hit = tr(`act.${action}`);
+  if (hit !== `act.${action}`) return hit;
 
   /* Operational skills are logged as `agent_<skill_name>` — the assistant
      acting on someone's behalf. Say that plainly. */
   if (action.startsWith("agent_"))
-    return `asked the assistant to ${action.slice(6).replace(/_/g, " ")}`;
+    return tr("act.agent", { what: action.slice(6).replace(/_/g, " ") });
 
   // Anything new: readable rather than hidden.
   return action.replace(/_/g, " ");
@@ -153,25 +121,27 @@ export function actionWords(action: string): string {
 /** "just now" / "12 min ago" / "Tue 14:03" — never a raw timestamp. */
 export function whenWords(tsSeconds: number): string {
   const diff = Date.now() / 1000 - tsSeconds;
-  if (diff < 45) return "just now";
-  if (diff < 3600) return `${Math.round(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.round(diff / 3600)} h ago`;
+  const lang = activeLocale() === "ru" ? "ru-RU" : "en-US";
+  if (diff < 45) return tr("time.now");
+  if (diff < 3600) return tr("time.min", { n: Math.round(diff / 60) });
+  if (diff < 86400) return tr("time.h", { n: Math.round(diff / 3600) });
   const d = new Date(tsSeconds * 1000);
   if (diff < 7 * 86400)
-    return d.toLocaleDateString(undefined, {
+    return d.toLocaleDateString(lang, {
       weekday: "short",
       hour: "2-digit",
       minute: "2-digit",
     });
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return d.toLocaleDateString(lang, { day: "numeric", month: "short" });
 }
 
 /* ---------- sizes ---------- */
 
 export function sizeWords(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const ru = activeLocale() === "ru";
+  if (bytes < 1024) return `${bytes} ${ru ? "Б" : "B"}`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} ${ru ? "КБ" : "KB"}`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} ${ru ? "МБ" : "MB"}`;
 }
 
 /* ---------- errors ---------- */
@@ -180,14 +150,13 @@ export function sizeWords(bytes: number): string {
 export function errorWords(message: string): string {
   const m = message.toLowerCase();
   if (m.includes("403") || m.includes("forbidden") || m.includes("denied"))
-    return "Your access level doesn't cover this. Ask an administrator if you need it.";
-  if (m.includes("401") || m.includes("unauthorized"))
-    return "Your session has expired. Sign in again to continue.";
-  if (m.includes("404") || m.includes("not found"))
-    return "That's no longer here — it may have been removed.";
-  if (m.includes("413") || m.includes("too large"))
-    return "That file is too big. Try one under 20 MB.";
+    return tr("err.forbidden");
+  if (m.includes("401") || m.includes("unauthorized")) return tr("err.expired");
+  if (m.includes("404") || m.includes("not found")) return tr("err.gone");
+  if (m.includes("413") || m.includes("too large")) return tr("err.large");
+  if (m.includes("502") || m.includes("anthropic") || m.includes("openai") || m.includes("model could not"))
+    return tr("err.model");
   if (m.includes("fetch") || m.includes("network") || m.includes("failed to fetch"))
-    return "Can't reach the server. Check your connection and try again.";
+    return tr("err.network");
   return message;
 }

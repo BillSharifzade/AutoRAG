@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
+import { useLocale } from "@/i18n";
 import { api, ApiError, type CodeProposal } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useLoad } from "@/lib/use-load";
@@ -44,7 +45,16 @@ import { AssistantsSkeleton } from "@/components/skeleton";
 
 type Lens = "pending" | "settled";
 
+/* The four gates, as dictionary keys — the text lives in `@/i18n/engineering`. */
+const GATES = [
+  { icon: ShieldCheck, key: "role" },
+  { icon: X, key: "files" },
+  { icon: FileDiff, key: "untrusted" },
+  { icon: Check, key: "you" },
+] as const;
+
 export default function EngineeringPage() {
+  const { t } = useLocale();
   const { token, me } = useAuth();
   const [proposals, setProposals] = useState<CodeProposal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,8 +115,8 @@ export default function EngineeringPage() {
       <Stagger>
         <StaggerItem>
           <Restricted
-            what="Reviewing KARAG's own code is restricted"
-            who="This screen decides whether a change reaches the running platform. It's limited to platform engineers, and only a platform operator can grant that."
+            what={t("engineering.restricted.what")}
+            who={t("engineering.restricted.who")}
             yourRole={me.roles.map(roleLabel).join(", ")}
           />
         </StaggerItem>
@@ -123,13 +133,13 @@ export default function EngineeringPage() {
   return (
     <Stagger className="flex flex-col gap-6">
       <PageHero
-        eyebrow="Engineering"
-        title="Changes waiting for a human"
-        lead="KARAG can write a change to its own source, but it can never ship one. Each proposal lands on its own branch with the full test suite already run against it, and stays there until someone here applies it."
+        eyebrow={t("engineering.eyebrow")}
+        title={t("engineering.title")}
+        lead={t("engineering.lead")}
         actions={
           <Button variant="ghost" onClick={refresh}>
             <RefreshCw className="size-4" />
-            Refresh
+            {t("common.refresh")}
           </Button>
         }
       />
@@ -143,30 +153,9 @@ export default function EngineeringPage() {
       {/* the four gates — facts about the mechanism, stated once */}
       <StaggerItem>
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            {
-              icon: ShieldCheck,
-              t: "Role-gated",
-              d: "Only a platform engineer can ask for a change, and only an operator can grant that role.",
-            },
-            {
-              icon: X,
-              t: "Off-limits files",
-              d: "Access control, the tenant directory and the guard itself can never be edited — by any role.",
-            },
-            {
-              icon: FileDiff,
-              t: "Untrusted input refused",
-              d: "A conversation carrying an uploaded or retrieved document cannot produce a change at all.",
-            },
-            {
-              icon: Check,
-              t: "You apply it",
-              d: "The running system is untouched until someone presses Apply on this page.",
-            },
-          ].map((g, i) => (
+          {GATES.map((g, i) => (
             <motion.div
-              key={g.t}
+              key={g.key}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.08 + i * 0.06, duration: 0.45, ease: EASE }}
@@ -175,8 +164,12 @@ export default function EngineeringPage() {
               <span className="grid size-8 place-items-center rounded-lg bg-accent-soft text-accent">
                 <g.icon className="size-4" />
               </span>
-              <p className="mt-3 text-[13px] font-semibold">{g.t}</p>
-              <p className="mt-1 text-[12px] leading-relaxed text-mut">{g.d}</p>
+              <p className="mt-3 text-[13px] font-semibold">
+                {t(`engineering.gate.${g.key}`)}
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-mut">
+                {t(`engineering.gate.${g.key}.d`)}
+              </p>
             </motion.div>
           ))}
         </section>
@@ -187,19 +180,19 @@ export default function EngineeringPage() {
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
             <div>
               <h2 className="font-display text-[16px] font-semibold">
-                Suggested changes
+                {t("engineering.suggested")}
               </h2>
               <p className="mt-0.5 text-[13px] text-mut">
-                Read the diff before you apply. Nothing here has run yet.
+                {t("engineering.suggested.sub")}
               </p>
             </div>
             <Segmented
               value={lens}
               onChange={setLens}
-              ariaLabel="Which proposals"
+              ariaLabel={t("engineering.lens.aria")}
               options={[
-                { value: "pending", label: "Waiting", count: pending.length },
-                { value: "settled", label: "Decided", count: settled.length },
+                { value: "pending", label: t("engineering.lens.pending"), count: pending.length },
+                { value: "settled", label: t("engineering.lens.settled"), count: settled.length },
               ]}
             />
           </header>
@@ -210,13 +203,13 @@ export default function EngineeringPage() {
                 icon={<GitBranch className="size-6" />}
                 title={
                   lens === "pending"
-                    ? "Nothing waiting"
-                    : "Nothing decided yet"
+                    ? t("engineering.empty.pending")
+                    : t("engineering.empty.settled")
                 }
                 hint={
                   lens === "pending"
-                    ? "Ask KARAG in chat to change something about itself. The proposal appears here with its test results, and nothing moves until you say so."
-                    : "Once you apply or discard a proposal it moves here, with who decided and when."
+                    ? t("engineering.empty.pending.hint")
+                    : t("engineering.empty.settled.hint")
                 }
               />
             ) : (
@@ -257,7 +250,13 @@ function Proposal({
   onApply: () => void;
   onDiscard: () => void;
 }) {
+  const { t, locale } = useLocale();
   const decided = p.status !== "pending";
+  const lang = locale === "ru" ? "ru-RU" : "en-US";
+  const fileCount = t(
+    `engineering.file.${new Intl.PluralRules(lang).select(p.files_changed.length)}`,
+    { n: p.files_changed.length.toLocaleString(lang) },
+  );
   return (
     <motion.div
       layout
@@ -285,29 +284,26 @@ function Proposal({
               {p.tests_passed ? (
                 <>
                   <Check className="size-3.5 text-good" />
-                  All tests passed
+                  {t("engineering.testsPassed")}
                 </>
               ) : (
                 <>
                   <X className="size-3.5 text-bad" />
-                  Tests failed
+                  {t("engineering.testsFailed")}
                 </>
               )}
             </span>
             <span className="flex items-center gap-1.5 tabular-nums">
               <span className="flex items-center text-good">
                 <Plus className="size-3" />
-                {p.insertions}
+                {p.insertions.toLocaleString(lang)}
               </span>
               <span className="flex items-center text-bad">
                 <Minus className="size-3" />
-                {p.deletions}
+                {p.deletions.toLocaleString(lang)}
               </span>
             </span>
-            <span>
-              {p.files_changed.length}{" "}
-              {p.files_changed.length === 1 ? "file" : "files"}
-            </span>
+            <span>{fileCount}</span>
             <span className="text-faint">·</span>
             <span>{whenWords(p.created_at)}</span>
             {decided && (
@@ -318,7 +314,7 @@ function Proposal({
                     : "bg-surface-2 text-mut"
                 }`}
               >
-                {p.status}
+                {t(`engineering.status.${p.status}`)}
               </span>
             )}
           </span>
@@ -340,14 +336,11 @@ function Proposal({
             <div className="border-t border-line p-4">
               {!p.tests_passed && (
                 <div className="mb-4">
-                  <Notice tone="bad">
-                    The test suite failed against this change. Applying it would
-                    put failing code on the running platform.
-                  </Notice>
+                  <Notice tone="bad">{t("engineering.testsFailed.notice")}</Notice>
                 </div>
               )}
 
-              <p className="text-[12.5px] font-semibold">Files it touches</p>
+              <p className="text-[12.5px] font-semibold">{t("engineering.files")}</p>
               <ul className="mt-1.5 flex flex-wrap gap-1.5">
                 {p.files_changed.map((f) => (
                   <li
@@ -362,7 +355,7 @@ function Proposal({
               {p.tests_summary && (
                 <>
                   <p className="mt-4 text-[12.5px] font-semibold">
-                    What the tests said
+                    {t("engineering.testsSaid")}
                   </p>
                   <pre className="mt-1.5 overflow-x-auto rounded-lg bg-bg-deep p-3 font-mono text-[11.5px] leading-relaxed text-mut">
                     {p.tests_summary}
@@ -370,7 +363,9 @@ function Proposal({
                 </>
               )}
 
-              <p className="mt-4 text-[12.5px] font-semibold">The change</p>
+              <p className="mt-4 text-[12.5px] font-semibold">
+                {t("engineering.theChange")}
+              </p>
               {detail?.diff ? (
                 <pre className="mt-1.5 max-h-96 overflow-auto rounded-lg bg-bg-deep p-3 font-mono text-[11.5px] leading-relaxed">
                   {detail.diff.split("\n").map((line, i) => (
@@ -391,14 +386,16 @@ function Proposal({
                   ))}
                 </pre>
               ) : (
-                <p className="mt-1.5 text-[12.5px] text-faint">Loading the diff…</p>
+                <p className="mt-1.5 text-[12.5px] text-faint">
+                  {t("engineering.loadingDiff")}
+                </p>
               )}
 
               {!decided && (
                 <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">
                   <ConfirmAction
-                    question="Put this on the running platform?"
-                    confirmLabel="Yes, apply it"
+                    question={t("engineering.confirm.q")}
+                    confirmLabel={t("engineering.confirm.yes")}
                     onConfirm={onApply}
                   >
                     {(start) => (
@@ -408,23 +405,25 @@ function Proposal({
                         disabled={busy}
                       >
                         <Check className="size-4" />
-                        Apply this change
+                        {t("engineering.apply")}
                       </Button>
                     )}
                   </ConfirmAction>
                   <Button variant="ghost" onClick={onDiscard} disabled={busy}>
-                    Discard
+                    {t("engineering.discard")}
                   </Button>
                   <p className="text-[12px] text-faint">
-                    Written by {p.model} · asked for by {p.author}
+                    {t("engineering.byline", { model: p.model, author: p.author })}
                   </p>
                 </div>
               )}
 
               {decided && (
                 <p className="mt-4 border-t border-line pt-4 text-[12.5px] text-mut">
-                  {p.status === "applied" ? "Applied" : "Discarded"} by{" "}
-                  {p.resolved_by} {whenWords(p.resolved_at)}.
+                  {t(`engineering.decided.${p.status}`, {
+                    who: p.resolved_by,
+                    when: whenWords(p.resolved_at),
+                  })}
                 </p>
               )}
             </div>

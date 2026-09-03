@@ -154,6 +154,39 @@ def sql_bindings(sql: str) -> set[str]:
     return set(_BIND_NAMED.findall(sql)) | set(_BIND_PYFORMAT.findall(sql))
 
 
+_INT_HINTS = ("_id", "_count", "count", "qty", "quantity", "units", "days", "year", "month", "limit")
+_NUM_HINTS = ("amount", "price", "total", "sum", "rate", "percent", "ratio")
+_BOOL_HINTS = ("is_", "has_", "active", "enabled")
+
+
+def infer_param_schema(sql: str) -> dict:
+    """A closed parameter schema derived from the statement's placeholders.
+
+    An author who writes ``where store_id = :store_id and day = :day`` should
+    not also have to write JSON-schema by hand. Types are guessed from the
+    name — ``*_id``/``*_count`` integers, money words numbers, ``is_*``
+    booleans, everything else a string — and can be edited afterwards.
+    """
+    props: dict = {}
+    for name in sorted(sql_bindings(sql) - _RESERVED_PARAMS):
+        lowered = name.lower()
+        if lowered.startswith(_BOOL_HINTS):
+            ptype = "boolean"
+        elif lowered.endswith(_INT_HINTS) or lowered in _INT_HINTS:
+            ptype = "integer"
+        elif any(h in lowered for h in _NUM_HINTS):
+            ptype = "number"
+        else:
+            ptype = "string"
+        props[name] = {"type": ptype, "description": name.replace("_", " ")}
+    return {
+        "type": "object",
+        "properties": props,
+        "required": sorted(props),
+        "additionalProperties": False,
+    }
+
+
 def validate_definition(defn: SkillDefinition) -> None:
     """Full pre-store validation — fail loudly at authoring time, not at ask time."""
     if defn.kind not in KINDS:

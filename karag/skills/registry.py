@@ -29,6 +29,10 @@ class SkillRegistry:
         """
         return self._skills.pop((tenant_id, name), None) is not None
 
+    def get(self, tenant_id: str, name: str) -> Skill | None:
+        """The registered skill under exactly this (tenant, name), or None."""
+        return self._skills.get((tenant_id, name))
+
     def visible_for(self, principal: Principal) -> list[Skill]:
         return [s for s in self._skills.values() if s.visible_to(principal)]
 

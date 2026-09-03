@@ -1,41 +1,48 @@
 "use client";
 
-/* Assistants — a helper you set up once for a team.
+/* Assistants — a list of cards and one focused form.
  *
- * The old page asked for a "persona", an "instruction" and a "skill
- * allow-list". Someone in HR has no way in to that. This one asks three
- * questions in plain words — who is it for, how should it behave, what may it
- * do — and starts from a template so the page is never a blank box.
- *
- * The signature is the preview rail: the assistant's card assembles itself as
- * you type, and directly under it is a real conversation with the saved
- * assistant. You are always looking at the thing you are making. */
+ * An assistant is the plain chat with a job description: a name, how it should
+ * behave, and what it may use. Creating one is three fields on one panel;
+ * nothing about languages, nothing technical. Everyone in the company may use
+ * any assistant; only the person who made it (or an administrator) can change
+ * it. */
 
 import {
+  ArrowLeft,
   Bot,
-  Check,
-  Headphones,
+  ExternalLink,
+  Pencil,
   Plus,
-  Save,
-  Sparkles,
-  Wallet,
-  Users,
-  Wrench,
+  Send,
+  Trash2,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useMemo, useState } from "react";
 import {
   api,
-  LANGUAGE_LABELS,
+  type Answer,
   type ApiError,
   type Assistant,
-  type Language,
   type SkillInfo,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useLoad } from "@/lib/use-load";
+import { useLocale, useT } from "@/i18n";
 import { errorWords } from "@/lib/words";
-import { Button, Input, Picker, Textarea } from "@/components/ui";
 import {
+  accessOf,
+  humanise,
+  initials,
+  pluralKey,
+  sameAccess,
+  toneFor,
+  type AccessMode,
+} from "@/components/assistants/helpers";
+import { TEMPLATES } from "@/components/assistants/templates";
+import {
+  ConfirmAction,
   EASE,
   Empty,
   Notice,
@@ -43,656 +50,561 @@ import {
   Stagger,
   StaggerItem,
 } from "@/components/pro";
-import { AssistantsSkeleton } from "@/components/skeleton";
-import { PreviewThread } from "@/components/chat-thread";
+import { Button, Input, Textarea } from "@/components/ui";
 
-/* Deterministic gradient + initials, so an assistant looks the same everywhere. */
-const AVATARS = [
-  "linear-gradient(135deg,#ec2336,#7a1220)",
-  "linear-gradient(135deg,#3e3b4e,#1a1822)",
-  "linear-gradient(135deg,#c0392b,#8e44ad)",
-  "linear-gradient(135deg,#2c3e50,#4ca1af)",
-  "linear-gradient(135deg,#603813,#b29f94)",
-  "linear-gradient(135deg,#16222a,#3a6073)",
-];
-function avatarFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return AVATARS[h % AVATARS.length];
-}
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
+type View =
+  | { mode: "list" }
+  | { mode: "new" }
+  | { mode: "edit"; a: Assistant }
+  | { mode: "detail"; a: Assistant };
 
-/* A blank instruction box is the hardest part of this page for someone who
-   hasn't written one before. These are starting points, not presets — every
-   field stays editable afterwards. */
-const TEMPLATES = [
-  {
-    key: "helpdesk",
-    icon: Headphones,
-    name: "Helpdesk",
-    forWho: "Front desk and support",
-    instruction:
-      "Answer staff questions about our policies and procedures. Quote the exact rule and say which document it came from. If the answer isn't in what you've read, say so and suggest who to ask.",
-  },
-  {
-    key: "finance",
-    icon: Wallet,
-    name: "Finance analyst",
-    forWho: "Finance team",
-    instruction:
-      "Report figures exactly as the data returns them — never estimate or round without saying so. Always show the period the number covers. If a figure looks unusual, point it out rather than explaining it away.",
-  },
-  {
-    key: "hr",
-    icon: Users,
-    name: "HR assistant",
-    forWho: "People team",
-    instruction:
-      "Help with leave, onboarding and workplace policy questions. Be warm and concrete. Never speculate about an individual's records, and direct anything sensitive to a person rather than answering it yourself.",
-  },
-];
+/* ---------- small pieces ---------- */
 
-export default function AssistantsPage() {
-  const { token } = useAuth();
-  const [assistants, setAssistants] = useState<Assistant[]>([]);
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [instruction, setInstruction] = useState("");
-  const [language, setLanguage] = useState<Language>("auto");
-  const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [limitSkills, setLimitSkills] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-
-  const refresh = useCallback(
-    () =>
-      api.assistants
-        .list(token)
-        .then((d) => setAssistants(d.assistants))
-        .catch(() => setAssistants([])),
-    [token],
+function Avatar({ name, size = "size-11" }: { name: string; size?: string }) {
+  return (
+    <span
+      className={`grid ${size} shrink-0 place-items-center rounded-2xl font-display text-[14px] font-bold ${toneFor(name)}`}
+    >
+      {initials(name)}
+    </span>
   );
+}
 
-  useEffect(() => {
-    Promise.all([
-      refresh(),
-      api
-        .skills(token)
-        .then((d) => setSkills(d.skills))
-        .catch(() => setSkills([])),
-    ]).finally(() => setLoaded(true));
-  }, [token, refresh]);
+function AccessLine({ a }: { a: Assistant }) {
+  const t = useT();
+  const { locale } = useLocale();
+  const mode = accessOf(a.allowed_skill_names);
+  if (mode === "all") return <>{t("assistants.access.all")}</>;
+  if (mode === "docs") return <>{t("assistants.access.docs")}</>;
+  const n = a.allowed_skill_names?.length ?? 0;
+  return <>{t(`assistants.skillsCount.${pluralKey(locale, n)}`, { n })}</>;
+}
 
-  function reset() {
-    setProblem(null);
-    setSaved(null);
-  }
+function Owner({ a }: { a: Assistant }) {
+  const t = useT();
+  const { me } = useAuth();
+  return (
+    <>{a.created_by && a.created_by === me?.user_id ? t("assistants.byYou") : t("assistants.by", { who: a.created_by || "—" })}</>
+  );
+}
 
-  function startNew(template?: (typeof TEMPLATES)[number]) {
-    setEditingId(null);
-    setCreating(true);
-    setName(template?.name ?? "");
-    setInstruction(template?.instruction ?? "");
-    setLanguage("auto");
-    setChecked(new Set());
-    setLimitSkills(false);
-    reset();
-  }
+/* ---------- a card ---------- */
 
-  function edit(a: Assistant) {
-    setEditingId(a.id);
-    setCreating(false);
-    setName(a.name);
-    setInstruction(a.instruction);
-    setLanguage(a.language ?? "auto");
-    setChecked(new Set(a.allowed_skill_names ?? []));
-    setLimitSkills(Boolean(a.allowed_skill_names?.length));
-    reset();
-  }
+function AssistantCard({ a, onOpen, onEdit }: { a: Assistant; onOpen: () => void; onEdit: () => void }) {
+  const t = useT();
+  return (
+    <motion.div
+      layout
+      whileHover={{ y: -2 }}
+      className="group flex h-full flex-col rounded-2xl border border-line bg-surface p-5 transition-shadow card-ring"
+    >
+      <button type="button" onClick={onOpen} className="flex cursor-pointer items-start gap-3.5 text-left">
+        <Avatar name={a.name} />
+        <span className="min-w-0">
+          <span className="font-display block truncate text-[15.5px] font-semibold">{a.name}</span>
+          <span className="mt-0.5 line-clamp-2 block text-[13px] leading-relaxed text-mut">
+            {a.instruction || t("assistants.detail.noInstruction")}
+          </span>
+        </span>
+      </button>
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4 text-[12px] text-faint">
+        <span>
+          <AccessLine a={a} /> · <Owner a={a} />
+        </span>
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+          <Link
+            href={`/?assistant=${a.id}`}
+            title={t("assistants.card.open")}
+            className="grid size-8 place-items-center rounded-lg text-mut transition-colors hover:bg-accent-soft hover:text-accent-strong"
+          >
+            <ExternalLink className="size-4" />
+          </Link>
+          {a.can_edit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              title={t("common.edit")}
+              aria-label={t("common.edit")}
+              className="grid size-8 cursor-pointer place-items-center rounded-lg text-mut transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <Pencil className="size-4" />
+            </button>
+          )}
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ---------- the form ---------- */
+
+function AssistantForm({
+  existing,
+  skills,
+  onSaved,
+  onDeleted,
+  onCancel,
+}: {
+  existing?: Assistant;
+  skills: SkillInfo[];
+  onSaved: (a: Assistant, created: boolean) => void;
+  onDeleted?: (id: string) => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const { token } = useAuth();
+  const [name, setName] = useState(existing?.name ?? "");
+  const [instruction, setInstruction] = useState(existing?.instruction ?? "");
+  const [mode, setMode] = useState<AccessMode>(existing ? accessOf(existing.allowed_skill_names) : "all");
+  const [picked, setPicked] = useState<string[]>(existing?.allowed_skill_names ?? []);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const allowed: string[] | null = mode === "all" ? null : mode === "docs" ? [] : picked;
+  const ready = name.trim().length > 0 && (mode !== "some" || picked.length > 0);
+  const dirty =
+    !existing ||
+    existing.name !== name.trim() ||
+    existing.instruction !== instruction ||
+    !sameAccess(existing.allowed_skill_names, allowed);
 
   async function save() {
     if (!name.trim()) {
-      setProblem("Give it a name first — that's how people will pick it.");
+      setErr(t("assistants.error.name"));
       return;
     }
     setBusy(true);
-    reset();
-    const body = {
-      name: name.trim(),
-      instruction,
-      allowed_skill_names: limitSkills && checked.size ? [...checked] : null,
-      language,
-    };
+    setErr("");
     try {
-      const a = editingId
-        ? await api.assistants.update(token, editingId, body)
-        : await api.assistants.create(token, body);
-      setEditingId(a.id);
-      setCreating(false);
-      setSaved(
-        editingId
-          ? "Saved. Everyone using it sees the change straight away."
-          : `${a.name} is ready — try it below.`,
-      );
-      await refresh();
+      const saved = existing
+        ? await api.assistants.update(token, existing.id, {
+            name: name.trim(),
+            instruction,
+            allowed_skill_names: allowed,
+          })
+        : await api.assistants.create(token, {
+            name: name.trim(),
+            instruction,
+            allowed_skill_names: allowed,
+          });
+      onSaved(saved, !existing);
     } catch (e) {
-      setProblem(errorWords((e as ApiError).message));
+      setErr(errorWords((e as ApiError).message));
     } finally {
       setBusy(false);
     }
   }
 
-  const open = creating || editingId !== null;
+  const modes: { value: AccessMode; label: string; hint: string }[] = [
+    { value: "all", label: t("assistants.access.all"), hint: t("assistants.access.all.hint") },
+    { value: "docs", label: t("assistants.access.docs"), hint: t("assistants.access.docs.hint") },
+    { value: "some", label: t("assistants.access.some"), hint: t("assistants.access.some.hint") },
+  ];
 
-  const dirty = useMemo(() => {
-    if (creating) return Boolean(name.trim() || instruction.trim());
-    const a = assistants.find((x) => x.id === editingId);
-    if (!a) return false;
-    const was = new Set(a.allowed_skill_names ?? []);
-    const sameSkills =
-      limitSkills === Boolean(a.allowed_skill_names?.length) &&
-      was.size === checked.size &&
-      [...checked].every((s) => was.has(s));
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <label htmlFor="asst-name" className="mb-1.5 block text-[13px] font-semibold">
+          {t("common.name")}
+        </label>
+        <Input
+          id="asst-name"
+          autoFocus={!existing}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("assistants.field.name.placeholder")}
+          className="h-11 text-[15px]"
+        />
+      </div>
+
+      <div>
+        <label htmlFor="asst-instruction" className="mb-1.5 block text-[13px] font-semibold">
+          {t("assistants.field.behaviour")}
+        </label>
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12px] text-faint">
+          <span>{t("assistants.templates")}</span>
+          {TEMPLATES.map(({ key, icon: Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setInstruction(t(`assistants.template.${key}.text`))}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-mut transition-colors hover:border-accent/50 hover:text-ink"
+            >
+              <Icon className="size-3.5 text-accent" /> {t(`assistants.template.${key}`)}
+            </button>
+          ))}
+        </div>
+        <Textarea
+          id="asst-instruction"
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          rows={5}
+          placeholder={t("assistants.field.behaviour.placeholder")}
+          className="min-h-32"
+        />
+      </div>
+
+      <div>
+        <p className="mb-2 text-[13px] font-semibold">{t("assistants.field.access")}</p>
+        <div role="radiogroup" aria-label={t("assistants.field.access")} className="grid gap-2 sm:grid-cols-3">
+          {modes.map((m) => {
+            const active = mode === m.value;
+            return (
+              <button
+                key={m.value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setMode(m.value)}
+                className={`cursor-pointer rounded-xl border p-3.5 text-left transition-colors ${
+                  active
+                    ? "border-accent bg-accent-soft/50"
+                    : "border-line bg-surface hover:border-line-strong hover:bg-surface-2"
+                }`}
+              >
+                <span className="block text-[13.5px] font-semibold">{m.label}</span>
+                <span className="mt-1 block text-[12px] leading-relaxed text-mut">{m.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+        <AnimatePresence initial={false}>
+          {mode === "some" && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="overflow-hidden"
+            >
+              <div className="mt-3 rounded-xl border border-line bg-surface-2 p-3.5">
+                {skills.length === 0 ? (
+                  <p className="text-[13px] text-mut">{t("assistants.skills.none")}</p>
+                ) : (
+                  <>
+                    <div className="mb-2 flex items-center justify-between text-[12px] text-faint">
+                      <span>{t("assistants.skills.picked", { n: picked.length, total: skills.length })}</span>
+                      <span className="flex gap-3">
+                        <button type="button" className="cursor-pointer font-semibold hover:text-ink" onClick={() => setPicked(skills.map((s) => s.name))}>
+                          {t("assistants.skills.selectAll")}
+                        </button>
+                        <button type="button" className="cursor-pointer font-semibold hover:text-ink" onClick={() => setPicked([])}>
+                          {t("assistants.skills.clear")}
+                        </button>
+                      </span>
+                    </div>
+                    <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+                      {skills.map((s) => {
+                        const on = picked.includes(s.name);
+                        return (
+                          <li key={s.name}>
+                            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface">
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() =>
+                                  setPicked((p) => (on ? p.filter((x) => x !== s.name) : [...p, s.name]))
+                                }
+                                className="mt-1 size-4 accent-[var(--accent)]"
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-[13px] font-medium">{s.description || humanise(s.name)}</span>
+                                <span className="block font-mono text-[11px] text-faint">{humanise(s.name)}</span>
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {picked.length === 0 && (
+                      <p className="mt-2 text-[12px] text-bad">{t("assistants.skills.pickOne")}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {err && <Notice tone="bad">{err}</Notice>}
+
+      <div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
+        <Button variant="cta" onClick={save} busy={busy} disabled={!ready || !dirty}>
+          {existing ? t("common.save") : t("common.create")}
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>
+          {t("common.cancel")}
+        </Button>
+        {existing && onDeleted && existing.can_edit && (
+          <span className="ml-auto">
+            <ConfirmAction
+              question={t("assistants.delete.question")}
+              onConfirm={async () => {
+                await api.assistants.remove(token, existing.id);
+                onDeleted(existing.id);
+              }}
+            >
+              {(start) => (
+                <Button variant="danger" size="sm" onClick={start}>
+                  <Trash2 className="size-3.5" /> {t("common.delete")}
+                </Button>
+              )}
+            </ConfirmAction>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- try a question ---------- */
+
+function TryBox({ a }: { a: Assistant }) {
+  const t = useT();
+  const { locale } = useLocale();
+  const { token } = useAuth();
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [err, setErr] = useState("");
+
+  async function ask() {
+    if (!q.trim()) return;
+    setBusy(true);
+    setErr("");
+    setAnswer(null);
+    try {
+      setAnswer(await api.ask(token, q.trim(), a.id));
+    } catch (e) {
+      setErr(errorWords((e as ApiError).message));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-5">
+      <p className="font-display text-[15px] font-semibold">{t("assistants.try.title")}</p>
+      <p className="mt-0.5 text-[12.5px] text-faint">{t("assistants.try.caption")}</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void ask();
+        }}
+        className="mt-3 flex gap-2"
+      >
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("assistants.try.placeholder")} />
+        <Button type="submit" busy={busy} disabled={!q.trim()}>
+          <Send className="size-4" /> {t("assistants.try.ask")}
+        </Button>
+      </form>
+      {err && (
+        <div className="mt-3">
+          <Notice tone="bad">{err}</Notice>
+        </div>
+      )}
+      {answer && (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
+          <div className="whitespace-pre-wrap text-[14px] leading-relaxed">{answer.text || t("assistants.try.empty")}</div>
+          <p className="mt-2 flex flex-wrap gap-3 text-[12px] text-faint">
+            {answer.skills_used.length > 0 && (
+              <span>{t("assistants.try.used", { skills: answer.skills_used.map(humanise).join(", ") })}</span>
+            )}
+            {answer.citations.length > 0 && (
+              <span>
+                {t(`assistants.try.sources.${pluralKey(locale, answer.citations.length)}`, { n: answer.citations.length })}
+              </span>
+            )}
+          </p>
+          <Link
+            href={`/?assistant=${a.id}`}
+            className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-accent-strong hover:underline"
+          >
+            {t("assistants.try.continue")} <ExternalLink className="size-3.5" />
+          </Link>
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- the page ---------- */
+
+export default function AssistantsPage() {
+  const t = useT();
+  const { token } = useAuth();
+  const [assistants, setAssistants] = useState<Assistant[]>([]);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [view, setView] = useState<View>({ mode: "list" });
+  const [notice, setNotice] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [a, s] = await Promise.all([api.assistants.list(token), api.skills(token)]);
+      setAssistants(a.assistants);
+      setSkills(s.skills);
+    } catch (e) {
+      setNotice({ tone: "bad", text: errorWords((e as ApiError).message) });
+    } finally {
+      setLoaded(true);
+    }
+  }, [token]);
+  useLoad(load);
+
+  const say = useCallback((tone: "good" | "bad", text: string) => {
+    setNotice({ tone, text });
+    setTimeout(() => setNotice(null), 4500);
+  }, []);
+
+  const sorted = useMemo(() => [...assistants].sort((a, b) => a.name.localeCompare(b.name)), [assistants]);
+
+  function onSaved(a: Assistant, created: boolean) {
+    setAssistants((all) => [...all.filter((x) => x.id !== a.id), a]);
+    say("good", created ? t("assistants.ready") : t("assistants.saved"));
+    setHighlight(a.id);
+    setTimeout(() => setHighlight(null), 2500);
+    setView(created ? { mode: "detail", a } : { mode: "list" });
+  }
+
+  function onDeleted(id: string) {
+    setAssistants((all) => all.filter((x) => x.id !== id));
+    say("good", t("assistants.deleted"));
+    setView({ mode: "list" });
+  }
+
+  const back = (
+    <button
+      type="button"
+      onClick={() => setView({ mode: "list" })}
+      className="mb-5 inline-flex cursor-pointer items-center gap-1.5 text-[13px] font-semibold text-mut transition-colors hover:text-ink"
+    >
+      <ArrowLeft className="size-3.5" /> {t("assistants.back")}
+    </button>
+  );
+
+  if (view.mode === "new" || view.mode === "edit") {
+    const existing = view.mode === "edit" ? view.a : undefined;
     return (
-      a.name !== name ||
-      a.instruction !== instruction ||
-      (a.language ?? "auto") !== language ||
-      !sameSkills
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: EASE }} className="mx-auto max-w-2xl">
+        {back}
+        <div className="mb-6 flex items-center gap-3">
+          {existing ? <Avatar name={existing.name} /> : (
+            <span className="grid size-11 place-items-center rounded-2xl bg-accent-soft text-accent">
+              <Bot className="size-5" />
+            </span>
+          )}
+          <h2 className="font-display text-[22px] font-bold">{existing ? existing.name : t("assistants.new")}</h2>
+        </div>
+        <div className="rounded-3xl border border-line bg-surface p-6 [box-shadow:var(--shadow)] sm:p-8">
+          <AssistantForm
+            existing={existing}
+            skills={skills}
+            onSaved={onSaved}
+            onDeleted={onDeleted}
+            onCancel={() => setView(existing ? { mode: "detail", a: existing } : { mode: "list" })}
+          />
+        </div>
+      </motion.div>
     );
-  }, [creating, editingId, assistants, name, instruction, language, checked, limitSkills]);
+  }
 
-  if (!loaded) return <AssistantsSkeleton />;
+  if (view.mode === "detail") {
+    const a = assistants.find((x) => x.id === view.a.id) ?? view.a;
+    return (
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: EASE }} className="mx-auto flex max-w-2xl flex-col gap-5">
+        <div>{back}</div>
+        {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+        <div className="rounded-3xl border border-line bg-surface p-6 [box-shadow:var(--shadow)] sm:p-8">
+          <div className="flex flex-wrap items-start gap-4">
+            <Avatar name={a.name} size="size-14" />
+            <div className="min-w-0 flex-1">
+              <h2 className="font-display text-[24px] font-bold leading-tight">{a.name}</h2>
+              <p className="mt-1 text-[12.5px] text-faint">
+                <AccessLine a={a} /> · <Owner a={a} />
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link href={`/?assistant=${a.id}`}>
+                <Button variant="cta">
+                  <ExternalLink className="size-4" /> {t("assistants.card.open")}
+                </Button>
+              </Link>
+              {a.can_edit && (
+                <Button variant="ghost" onClick={() => setView({ mode: "edit", a })}>
+                  <Pencil className="size-4" /> {t("common.edit")}
+                </Button>
+              )}
+            </div>
+          </div>
+          <p className="mt-5 whitespace-pre-wrap text-[14px] leading-relaxed text-mut">
+            {a.instruction || t("assistants.detail.noInstruction")}
+          </p>
+        </div>
+        <TryBox a={a} />
+      </motion.div>
+    );
+  }
 
   return (
     <Stagger className="flex flex-col gap-6">
       <PageHero
-        eyebrow="Assistants"
-        title="Set up a helper for a team"
-        lead="An assistant is the same AI with a job description: how to answer, in which language, and which company data it may touch. Everyone in the team gets the same behaviour."
+        eyebrow={t("assistants.eyebrow")}
+        title={t("assistants.title")}
+        lead={t("assistants.lead")}
         actions={
-          <Button variant="cta" onClick={() => startNew()}>
-            <Plus className="size-4" />
-            New assistant
+          <Button variant="cta" onClick={() => setView({ mode: "new" })}>
+            <Plus className="size-4" /> {t("assistants.new")}
           </Button>
         }
       />
-
-      {assistants.length === 0 && !open ? (
-        <StaggerItem>
-          <section className="rounded-3xl border border-line bg-surface p-8 [box-shadow:var(--shadow)]">
-            <div className="mx-auto max-w-2xl text-center">
-              <h2 className="font-display text-[19px] font-semibold">
-                Start from one of these
-              </h2>
-              <p className="mx-auto mt-2 max-w-lg text-[13.5px] leading-relaxed text-mut">
-                Each one comes with wording that works. Change anything you like
-                afterwards — nothing here is fixed.
-              </p>
-            </div>
-            <div className="mt-7 grid gap-3 md:grid-cols-3">
-              {TEMPLATES.map((t, i) => (
-                <motion.button
-                  key={t.key}
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 + i * 0.08, duration: 0.45, ease: EASE }}
-                  onClick={() => startNew(t)}
-                  className="group cursor-pointer rounded-2xl border border-line bg-surface p-5 text-left transition-[border-color,transform,box-shadow] duration-300 hover:-translate-y-1 hover:border-accent/50 card-ring"
-                >
-                  <span className="grid size-10 place-items-center rounded-xl bg-accent-soft text-accent transition-colors group-hover:bg-accent group-hover:text-accent-ink">
-                    <t.icon className="size-5" />
-                  </span>
-                  <span className="font-display mt-4 block text-[15px] font-semibold">
-                    {t.name}
-                  </span>
-                  <span className="mt-0.5 block text-[12px] text-faint">
-                    For {t.forWho.toLowerCase()}
-                  </span>
-                  <span className="mt-3 block text-[12.5px] leading-relaxed text-mut">
-                    &ldquo;{t.instruction.slice(0, 92)}…&rdquo;
-                  </span>
-                </motion.button>
-              ))}
-            </div>
-            <p className="mt-7 text-center">
-              <button
-                onClick={() => startNew()}
-                className="cursor-pointer text-[13px] font-semibold text-accent transition-colors hover:text-accent-hover"
-              >
-                Or start from scratch
-              </button>
-            </p>
-          </section>
-        </StaggerItem>
-      ) : (
-        <StaggerItem>
-          <div className="grid items-start gap-5 xl:grid-cols-12">
-            {/* ---- rail: the assistants that exist ---- */}
-            <aside className="flex flex-col gap-2 xl:col-span-3">
-              <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-mut">
-                Your assistants
-              </p>
-              <AnimatePresence initial={false}>
-                {assistants.map((a) => {
-                  const active = a.id === editingId;
-                  return (
-                    <motion.button
-                      key={a.id}
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.25, ease: EASE }}
-                      onClick={() => edit(a)}
-                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
-                        active
-                          ? "border-accent bg-accent-soft"
-                          : "border-line bg-surface hover:border-line-strong"
-                      }`}
-                    >
-                      <span
-                        className="grid size-9 shrink-0 place-items-center rounded-lg text-[12px] font-bold text-white"
-                        style={{ background: avatarFor(a.id) }}
-                      >
-                        {initials(a.name)}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13.5px] font-semibold">
-                          {a.name}
-                        </span>
-                        <span className="block truncate text-[11.5px] text-mut">
-                          {a.allowed_skill_names?.length
-                            ? `${a.allowed_skill_names.length} of ${skills.length} tasks`
-                            : "Everything it's allowed"}
-                        </span>
-                      </span>
-                    </motion.button>
-                  );
-                })}
-              </AnimatePresence>
-              <button
-                onClick={() => startNew()}
-                className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong py-3 text-[13px] font-semibold text-mut transition-colors hover:border-accent hover:text-accent"
-              >
-                <Plus className="size-4" />
-                New assistant
-              </button>
-            </aside>
-
-            {/* ---- the three questions ---- */}
-            <section className="rounded-2xl border border-line bg-surface [box-shadow:var(--shadow)] xl:col-span-5">
-              <header className="border-b border-line px-6 py-4">
-                <h2 className="font-display text-[16px] font-semibold">
-                  {creating ? "New assistant" : name || "Assistant"}
-                </h2>
-                <p className="mt-0.5 text-[13px] text-mut">
-                  {creating
-                    ? "Three questions and it's live."
-                    : "Changes apply the moment you save."}
-                </p>
-              </header>
-
-              <div className="flex flex-col gap-6 p-6">
-                <Field
-                  n={1}
-                  label="What should people call it?"
-                  hint="This is the name in the assistant list when someone starts a chat."
-                >
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Helpdesk"
-                  />
-                </Field>
-
-                <Field
-                  n={2}
-                  label="How should it behave?"
-                  hint="Write it the way you'd brief a new colleague on their first day."
-                >
-                  <Textarea
-                    value={instruction}
-                    onChange={(e) => setInstruction(e.target.value)}
-                    placeholder="Answer briefly. Always say which document an answer came from. If you don't know, say so."
-                    className="min-h-36"
-                  />
-                  {!instruction.trim() && (
-                    <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {TEMPLATES.map((t) => (
-                        <button
-                          key={t.key}
-                          onClick={() => setInstruction(t.instruction)}
-                          className="cursor-pointer rounded-full border border-line px-2.5 py-1 text-[11.5px] font-medium text-mut transition-colors hover:border-accent hover:text-accent"
-                        >
-                          Use {t.name.toLowerCase()} wording
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </Field>
-
-                <Field
-                  n={3}
-                  label="What is it allowed to do?"
-                  hint="This can only narrow what a person already has. It can never hand out access they don't have."
-                >
-                  <div className="flex flex-col gap-2">
-                    <Choice
-                      selected={!limitSkills}
-                      onSelect={() => setLimitSkills(false)}
-                      title="Everything the person already can"
-                      body="Whatever the person chatting is allowed to see, this assistant can use. Right for most teams."
-                    />
-                    <Choice
-                      selected={limitSkills}
-                      onSelect={() => setLimitSkills(true)}
-                      title="Only certain tasks"
-                      body="Keep it to a short list — useful for a narrow, single-purpose helper."
-                    />
-                  </div>
-
-                  <AnimatePresence initial={false}>
-                    {limitSkills && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.26, ease: EASE }}
-                        className="overflow-hidden"
-                      >
-                        <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-line p-2">
-                          {skills.length === 0 ? (
-                            <p className="px-2 py-3 text-[12.5px] text-faint">
-                              Nothing to choose from yet.
-                            </p>
-                          ) : (
-                            skills.map((s) => {
-                              const on = checked.has(s.name);
-                              return (
-                                <button
-                                  key={s.name}
-                                  onClick={() =>
-                                    setChecked((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(s.name)) next.delete(s.name);
-                                      else next.add(s.name);
-                                      return next;
-                                    })
-                                  }
-                                  className={`flex w-full cursor-pointer items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors ${
-                                    on ? "bg-accent-soft" : "hover:bg-surface-2"
-                                  }`}
-                                >
-                                  <span
-                                    className={`mt-0.5 grid size-4.5 shrink-0 place-items-center rounded-[5px] border transition-colors ${
-                                      on
-                                        ? "border-accent bg-accent text-accent-ink"
-                                        : "border-line-strong"
-                                    }`}
-                                  >
-                                    {on && <Check className="size-3" />}
-                                  </span>
-                                  <span className="min-w-0">
-                                    <span className="block text-[13px] font-medium">
-                                      {s.description}
-                                    </span>
-                                    <span className="mt-0.5 block truncate font-mono text-[10.5px] text-faint">
-                                      {s.name}
-                                    </span>
-                                  </span>
-                                </button>
-                              );
-                            })
-                          )}
-                        </div>
-                        {limitSkills && checked.size === 0 && (
-                          <p className="mt-2 text-[12px] text-warn">
-                            Nothing ticked — pick at least one, or switch back above.
-                          </p>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </Field>
-
-                <div>
-                  <p className="mb-1.5 text-[13px] font-semibold">
-                    Which language should it answer in?
-                  </p>
-                  <Picker
-                    value={language}
-                    onChange={(v) => setLanguage(v as Language)}
-                    ariaLabel="Answer language"
-                    options={Object.entries(LANGUAGE_LABELS).map(([v, l]) => ({
-                      value: v,
-                      label: v === "auto" ? "Match the question" : l,
-                    }))}
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
-                  <Button variant="cta" onClick={save} busy={busy} disabled={!dirty && !creating}>
-                    <Save className="size-4" />
-                    {creating ? "Create assistant" : "Save changes"}
-                  </Button>
-                  {dirty && !busy && (
-                    <span className="text-[12.5px] text-warn">Not saved yet</span>
-                  )}
-                  {!dirty && !creating && editingId && (
-                    <span className="text-[12.5px] text-faint">
-                      Everything saved
-                    </span>
-                  )}
-                </div>
-
-                <AnimatePresence mode="wait">
-                  {problem && <Notice key="bad" tone="bad">{problem}</Notice>}
-                  {saved && !problem && (
-                    <Notice key="ok" tone="good">{saved}</Notice>
-                  )}
-                </AnimatePresence>
-              </div>
-            </section>
-
-            {/* ---- the thing you're making ---- */}
-            <aside className="flex flex-col gap-4 xl:col-span-4 xl:sticky xl:top-4">
-              <PreviewCard
-                name={name}
-                instruction={instruction}
-                language={language}
-                limited={limitSkills ? checked.size : null}
-                totalSkills={skills.length}
-                id={editingId}
-              />
-              <section className="rounded-2xl border border-line bg-surface [box-shadow:var(--shadow)]">
-                <header className="flex items-center gap-2.5 border-b border-line px-5 py-3.5">
-                  <span className="grid size-7 place-items-center rounded-lg bg-accent-soft text-accent">
-                    <Bot className="size-3.5" />
-                  </span>
-                  <div>
-                    <h3 className="font-display text-[14px] font-semibold">
-                      Try it out
-                    </h3>
-                    <p className="text-[12px] text-mut">
-                      {editingId
-                        ? "A real answer, using this assistant."
-                        : "Save it first, then talk to it here."}
-                    </p>
-                  </div>
-                </header>
-                <div className="p-5">
-                  {editingId ? (
-                    <PreviewThread
-                      key={editingId}
-                      assistantId={editingId}
-                      placeholder="Ask it something…"
-                    />
-                  ) : (
-                    <Empty
-                      icon={<Sparkles className="size-6" />}
-                      title="Nothing to talk to yet"
-                      hint="Fill in the name and behaviour, press Create, and a real conversation appears here."
-                    />
-                  )}
-                </div>
-              </section>
-            </aside>
-          </div>
-        </StaggerItem>
-      )}
-    </Stagger>
-  );
-}
-
-/* ---------- pieces ---------- */
-
-function Field({
-  n,
-  label,
-  hint,
-  children,
-}: {
-  n: number;
-  label: string;
-  hint: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="mb-2 flex items-baseline gap-2.5">
-        <span className="font-display text-[13px] font-bold text-accent">
-          {n}
-        </span>
-        <div className="min-w-0">
-          <p className="text-[13.5px] font-semibold">{label}</p>
-          <p className="mt-0.5 text-[12px] leading-relaxed text-mut">{hint}</p>
-        </div>
-      </div>
-      <div className="pl-[26px]">{children}</div>
-    </div>
-  );
-}
-
-function Choice({
-  selected,
-  onSelect,
-  title,
-  body,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  title: string;
-  body: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 text-left transition-colors ${
-        selected
-          ? "border-accent bg-accent-soft/50"
-          : "border-line hover:border-line-strong hover:bg-surface-2"
-      }`}
-    >
-      <span
-        className={`mt-0.5 grid size-4.5 shrink-0 place-items-center rounded-full border-2 transition-colors ${
-          selected ? "border-accent" : "border-line-strong"
-        }`}
-      >
-        {selected && <span className="size-2 rounded-full bg-accent" />}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-[13.5px] font-semibold">{title}</span>
-        <span className="mt-0.5 block text-[12px] leading-relaxed text-mut">
-          {body}
-        </span>
-      </span>
-    </button>
-  );
-}
-
-/* The card assembles as you type — the page's signature. It shows exactly what
-   a colleague will meet: the name, the first line of the briefing, and what it
-   may reach. */
-function PreviewCard({
-  name,
-  instruction,
-  language,
-  limited,
-  totalSkills,
-  id,
-}: {
-  name: string;
-  instruction: string;
-  language: Language;
-  limited: number | null;
-  totalSkills: number;
-  id: string | null;
-}) {
-  const shown = name.trim() || "Untitled assistant";
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-line bg-surface p-5 [box-shadow:var(--shadow)]">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          background:
-            "radial-gradient(320px 140px at 100% 0%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 70%)",
-        }}
-      />
-      <div className="flex items-center gap-3.5">
-        <motion.span
-          key={shown}
-          initial={{ scale: 0.85, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 320, damping: 22 }}
-          className="grid size-12 shrink-0 place-items-center rounded-xl text-[15px] font-bold text-white"
-          style={{ background: avatarFor(id ?? shown) }}
-        >
-          {initials(shown)}
-        </motion.span>
-        <div className="min-w-0">
-          <p className="font-display truncate text-[16px] font-semibold">
-            {shown}
-          </p>
-          <p className="text-[12px] text-mut">
-            {language === "auto"
-              ? "Answers in the language you ask in"
-              : `Always answers in ${LANGUAGE_LABELS[language]}`}
-          </p>
-        </div>
-      </div>
-
-      <p className="mt-4 min-h-[3.5rem] rounded-xl border border-line bg-surface-2 p-3 text-[12.5px] leading-relaxed text-mut">
-        {instruction.trim() ? (
-          <>&ldquo;{instruction.trim().slice(0, 180)}
-          {instruction.trim().length > 180 ? "…" : ""}&rdquo;</>
-        ) : (
-          <span className="text-faint">
-            However it behaves will show up here as you write it.
-          </span>
+      <AnimatePresence>
+        {notice && (
+          <StaggerItem rise={0}>
+            <Notice tone={notice.tone}>{notice.text}</Notice>
+          </StaggerItem>
         )}
-      </p>
-
-      <p className="mt-3 flex items-center gap-1.5 text-[12px] text-mut">
-        <Wrench className="size-3.5 text-accent" />
-        {limited === null
-          ? "Can use anything the person is allowed to"
-          : limited === 0
-            ? "No tasks picked yet"
-            : `Limited to ${limited} of ${totalSkills} tasks`}
-      </p>
-    </div>
+      </AnimatePresence>
+      <StaggerItem>
+        {loaded && sorted.length === 0 ? (
+          <div className="rounded-3xl border border-line bg-surface">
+            <Empty
+              icon={<Bot className="size-6" />}
+              title={t("assistants.empty.title")}
+              hint={t("assistants.empty.hint")}
+              action={
+                <Button onClick={() => setView({ mode: "new" })}>
+                  <Plus className="size-4" /> {t("assistants.new")}
+                </Button>
+              }
+            />
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <AnimatePresence initial={false}>
+              {sorted.map((a) => (
+                <motion.div
+                  key={a.id}
+                  layout
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1, boxShadow: highlight === a.id ? "var(--glow)" : "none" }}
+                  exit={{ opacity: 0 }}
+                  className="rounded-2xl"
+                >
+                  <AssistantCard
+                    a={a}
+                    onOpen={() => setView({ mode: "detail", a })}
+                    onEdit={() => setView({ mode: "edit", a })}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </StaggerItem>
+    </Stagger>
   );
 }

@@ -30,6 +30,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { useT } from "@/i18n";
 
 /* ---------- motion foundation ---------- */
 
@@ -310,7 +311,7 @@ export function Segmented<T extends string>({
 export function ConfirmAction({
   onConfirm,
   question,
-  confirmLabel = "Yes, remove",
+  confirmLabel,
   children,
 }: {
   onConfirm: () => void | Promise<void>;
@@ -318,6 +319,7 @@ export function ConfirmAction({
   confirmLabel?: string;
   children: (start: () => void) => ReactNode;
 }) {
+  const t = useT();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   return (
@@ -346,14 +348,14 @@ export function ConfirmAction({
             className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg bg-bad-soft px-2.5 text-[12.5px] font-semibold text-bad transition-[filter] hover:brightness-95 disabled:opacity-50 dark:hover:brightness-125"
           >
             <Check className="size-3.5" />
-            {confirmLabel}
+            {confirmLabel ?? t("confirm.remove")}
           </button>
           <button
             onClick={() => setAsking(false)}
             className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12.5px] font-semibold text-mut transition-colors hover:text-ink"
           >
             <X className="size-3.5" />
-            Keep
+            {t("confirm.keep")}
           </button>
         </motion.span>
       ) : (
@@ -423,6 +425,7 @@ export function Restricted({
   who: string;
   yourRole?: string;
 }) {
+  const t = useT();
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -437,13 +440,11 @@ export function Restricted({
       <p className="mt-2.5 text-[14px] leading-relaxed text-mut">{who}</p>
       {yourRole && (
         <p className="mt-5 inline-flex items-center gap-2 rounded-full border border-line bg-surface-2 px-3.5 py-1.5 text-[12.5px] text-mut">
-          You are signed in as
+          {t("restricted.signedAs")}
           <strong className="font-semibold text-ink">{yourRole}</strong>
         </p>
       )}
-      <p className="mt-5 text-[12.5px] text-faint">
-        Ask an administrator at your company if you need this.
-      </p>
+      <p className="mt-5 text-[12.5px] text-faint">{t("restricted.ask")}</p>
     </motion.div>
   );
 }
@@ -481,12 +482,13 @@ export function Notice({
 /* A definition on demand, for the few platform words that have no plain
    synonym. Hover or focus — never a click, never a modal. */
 export function Explain({ term, children }: { term: string; children: ReactNode }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <span className="relative inline-flex">
       <button
         type="button"
-        aria-label={`What is ${term}?`}
+        aria-label={t("explain.what", { term })}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}

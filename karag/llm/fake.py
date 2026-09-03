@@ -67,6 +67,23 @@ class FakeGenerator:
         system: str,
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
+        on_delta=None,
+    ) -> LLMResponse:
+        response = await self._generate(system=system, messages=messages, tools=tools)
+        # A streaming caller sees the answer arrive word by word, exactly as it
+        # would from a real provider — so the SSE path is testable offline.
+        if on_delta is not None and response.text:
+            words = response.text.split(" ")
+            for i, word in enumerate(words):
+                await on_delta(word if i == len(words) - 1 else word + " ")
+        return response
+
+    async def _generate(
+        self,
+        *,
+        system: str,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec] | None = None,
     ) -> LLMResponse:
         # 1. If we just received a tool result, produce the final answer.
         if messages and messages[-1].role == MsgRole.TOOL:

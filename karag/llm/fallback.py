@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from .base import ChatMessage, Generator, LLMResponse, ToolSpec
+from .base import ChatMessage, DeltaCallback, Generator, LLMResponse, ToolSpec
 
 log = logging.getLogger("karag.llm.fallback")
 
@@ -30,10 +30,12 @@ class FallbackGenerator:
         system: str,
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
+        on_delta: DeltaCallback | None = None,
     ) -> LLMResponse:
+        extra = {"on_delta": on_delta} if on_delta is not None else {}
         try:
             response = await self.primary.generate(
-                system=system, messages=messages, tools=tools
+                system=system, messages=messages, tools=tools, **extra
             )
         except Exception as exc:
             log.warning(
@@ -41,7 +43,7 @@ class FallbackGenerator:
                 self.primary.model, type(exc).__name__, exc, self.fallback.model,
             )
             response = await self.fallback.generate(
-                system=system, messages=messages, tools=tools
+                system=system, messages=messages, tools=tools, **extra
             )
             response.usage.setdefault("served_by", self.fallback.model)
             return response

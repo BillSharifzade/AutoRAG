@@ -97,7 +97,20 @@ class Settings:
 
     # retrieval
     top_k: int = 5
-    max_iterations: int = 4
+    # tool-calling rounds per turn; a free database query often needs an
+    # exploratory SELECT or two before the real one
+    max_iterations: int = 8
+    # chunks scoring below this cosine similarity are not shown to the model;
+    # 0 keeps everything non-negative, ~0.2 is a sane floor for real embedders
+    min_score: float = 0.0
+    # at most this many chunks of one document per answer, so a long document
+    # cannot crowd every other source out of the context
+    max_per_document: int = 2
+    # a skill that has not answered by then is reported as failed
+    skill_timeout_s: float = 60.0
+
+    # where uploaded database files (SQLite, imported SQL dumps) are kept
+    upload_dir: str = "./data/uploads"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -140,5 +153,9 @@ class Settings:
             web_roles=_get("KARAG_WEB_ROLES", ""),
             pg_dsn=_get("KARAG_PG_DSN", "postgresql://localhost/karag"),
             top_k=int(_get("KARAG_TOP_K", "5")),
-            max_iterations=int(_get("KARAG_MAX_ITERATIONS", "4")),
+            max_iterations=int(_get("KARAG_MAX_ITERATIONS", "8")),
+            min_score=float(_get("KARAG_MIN_SCORE", "0")),
+            max_per_document=int(_get("KARAG_MAX_PER_DOCUMENT", "2")),
+            skill_timeout_s=float(_get("KARAG_SKILL_TIMEOUT", "60")),
+            upload_dir=_get("KARAG_UPLOAD_DIR", "./data/uploads"),
         )

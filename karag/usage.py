@@ -13,6 +13,23 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
+
+# Prompt caching changes what an input token costs: a cached read is billed at
+# a tenth of the list price and writing the cache at 1.25×. The recorder keeps
+# one input figure, so it stores the *billable equivalent* — the number of
+# full-price tokens that would cost the same — and the price list stays a
+# plain rate per token.
+CACHE_READ_WEIGHT = 0.1
+CACHE_WRITE_WEIGHT = 1.25
+
+
+def billable_input_tokens(usage: dict) -> int:
+    plain = int(usage.get("input_tokens", 0) or 0)
+    read = int(usage.get("cache_read_input_tokens", 0) or 0)
+    written = int(usage.get("cache_creation_input_tokens", 0) or 0)
+    return int(round(plain + read * CACHE_READ_WEIGHT + written * CACHE_WRITE_WEIGHT))
+
+
 # per-tenant event history kept for the usage dashboard's activity charts
 _EVENT_HISTORY = 1000
 # how many recent events the durable store returns for the activity charts
@@ -43,7 +60,7 @@ class UsageRecorder:
         self, *, tenant_id: str, user_id: str, usage: dict | None, model: str = ""
     ) -> None:
         usage = usage or {}
-        inp = int(usage.get("input_tokens", 0) or 0)
+        inp = billable_input_tokens(usage)
         out = int(usage.get("output_tokens", 0) or 0)
         # A fallback request is billed at the model that actually served it.
         served_by = str(usage.get("served_by") or model or "")
@@ -128,7 +145,7 @@ class SqliteUsageRecorder:
         self, *, tenant_id: str, user_id: str, usage: dict | None, model: str = ""
     ) -> None:
         usage = usage or {}
-        inp = int(usage.get("input_tokens", 0) or 0)
+        inp = billable_input_tokens(usage)
         out = int(usage.get("output_tokens", 0) or 0)
         served_by = str(usage.get("served_by") or model or "")
         with self._lock, self._conn:

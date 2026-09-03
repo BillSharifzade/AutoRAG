@@ -12,9 +12,13 @@ from ..domain import Chunk, DataClass, Document, Principal, new_id
 from ..errors import AccessDenied
 from ..ingestion import extract_text
 from ..llm.base import Embedder
-from ..rbac import can_ingest
+from ..rbac import can_ingest, visible_classes
 from ..vectorstore.base import VectorStore
 from .chunking import chunk_text
+
+
+def _same_title(a: str, b: str) -> bool:
+    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
 
 
 class IngestionService:
@@ -66,7 +70,16 @@ class IngestionService:
         data_class: DataClass | None = None,
         source_uri: str | None = None,
         metadata: dict | None = None,
+        replace_existing: bool = True,
     ) -> Document:
+        """Chunk, embed and store a document.
+
+        Adding a document whose title already exists in the tenant *replaces*
+        the earlier copy (``replace_existing``): people re-upload the corrected
+        price list under the same name and expect one price list, not two —
+        and duplicates would fill every retrieval slot with the same passage.
+        The replaced document id is recorded in ``metadata["replaced"]``.
+        """
         # Fail closed on missing classification.
         klass = data_class or DataClass.most_restrictive()
 
@@ -79,20 +92,40 @@ class IngestionService:
                 f"{principal.user_id} may not ingest {klass.value} data"
             )
 
+        replaced: list[str] = []
+        if replace_existing:
+            # Only what the uploader can see is a candidate: a title they are
+            # not cleared for must not become an oracle for its existence.
+            existing = await self._store.list_documents(
+                tenant_id=principal.tenant_id,
+                allowed_classes=visible_classes(principal),
+            )
+            for old in existing:
+                if _same_title(old.title, title):
+                    await self._store.delete_document(
+                        tenant_id=principal.tenant_id, document_id=old.document_id
+                    )
+                    replaced.append(old.document_id)
+        meta = dict(metadata or {})
+        if replaced:
+            meta["replaced"] = replaced
+
         doc = Document(
             id=new_id("doc"),
             tenant_id=principal.tenant_id,
             title=title,
             data_class=klass,
             source_uri=source_uri,
-            metadata=metadata or {},
+            metadata=meta,
         )
 
         pieces = chunk_text(text, max_chars=self._max_chars, overlap=self._overlap)
+        detail = {"title": title, "data_class": klass.value, "chunks": len(pieces)}
+        if replaced:
+            detail["replaced"] = replaced
         self._audit.record(AuditEvent(
             action="ingest", tenant_id=principal.tenant_id, user_id=principal.user_id,
-            decision="allow", resource=doc.id,
-            detail={"title": title, "data_class": klass.value, "chunks": len(pieces)},
+            decision="allow", resource=doc.id, detail=detail,
         ))
         if not pieces:
             return doc

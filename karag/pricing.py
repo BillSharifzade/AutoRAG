@@ -19,9 +19,13 @@ from dataclasses import dataclass
 
 # model id -> (USD per 1M input tokens, USD per 1M output tokens)
 DEFAULT_RATES: dict[str, tuple[float, float]] = {
-    # Anthropic
-    "claude-opus-4-8": (15.00, 75.00),
-    "claude-sonnet-5": (3.00, 15.00),
+    # Anthropic — first-party API list prices, USD per 1M tokens (2026-06)
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-6": (5.00, 25.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
     # OpenAI (fallback path)
     "gpt-5.5": (1.25, 10.00),

@@ -70,6 +70,7 @@ class OllamaGenerator:
         system: str,
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
+        on_delta=None,  # interface parity; this adapter does not stream
     ) -> LLMResponse:
         httpx = _httpx()
         payload: dict = {

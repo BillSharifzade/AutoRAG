@@ -25,6 +25,7 @@ import {
 } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type ApiError, type UsageEvent, type UsageTotals } from "@/lib/api";
+import { useLocale, useT, type Locale } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { useLoad } from "@/lib/use-load";
 import { Button, Card, CardHeader, EmptyState, Rise } from "@/components/ui";
@@ -36,22 +37,32 @@ const TOKEN_BUDGET = 1_000_000;
 const SLATE = "var(--accent-2)";
 const RED = "var(--accent)";
 
+/* Tile labels are dictionary keys — the text lives in `@/i18n/usage`. */
 const TILES = [
-  { key: "requests", label: "Requests", icon: MessageSquareText },
-  { key: "input_tokens", label: "Input tokens", icon: ArrowDownToLine },
-  { key: "output_tokens", label: "Output tokens", icon: ArrowUpFromLine },
-  { key: "total_tokens", label: "Total tokens", icon: Coins },
+  { key: "requests", label: "usage.tile.requests", icon: MessageSquareText },
+  { key: "input_tokens", label: "usage.tile.input_tokens", icon: ArrowDownToLine },
+  { key: "output_tokens", label: "usage.tile.output_tokens", icon: ArrowUpFromLine },
+  { key: "total_tokens", label: "usage.tile.total_tokens", icon: Coins },
 ] as const;
+
+/** BCP-47 tag for the interface language — drives every number and date here. */
+function langTag(locale: Locale): "ru-RU" | "en-US" {
+  return locale === "ru" ? "ru-RU" : "en-US";
+}
+
+function useLang() {
+  return langTag(useLocale().locale);
+}
 
 /* ---------- time range ---------- */
 
 type RangeKey = "all" | "today" | "7d" | "30d";
 
 const RANGES: { key: RangeKey; label: string; days: number | null }[] = [
-  { key: "all", label: "Overall", days: null },
-  { key: "today", label: "Today", days: 0 },
-  { key: "7d", label: "7 days", days: 7 },
-  { key: "30d", label: "30 days", days: 30 },
+  { key: "all", label: "usage.range.all", days: null },
+  { key: "today", label: "usage.range.today", days: 0 },
+  { key: "7d", label: "usage.range.7d", days: 7 },
+  { key: "30d", label: "usage.range.30d", days: 30 },
 ];
 
 /** Unix-seconds cutoff for a range, or null for "all". "today" is local midnight. */
@@ -102,8 +113,9 @@ function money(usd: number): string {
 }
 
 function useAnimatedNumber(value: number): MotionValue<string> {
+  const lang = useLang();
   const mv = useMotionValue(0);
-  const rounded = useTransform(mv, (v) => Math.round(v).toLocaleString("en-US"));
+  const rounded = useTransform(mv, (v) => Math.round(v).toLocaleString(lang));
   useEffect(() => {
     const controls = animate(mv, value, {
       duration: 0.9,
@@ -130,6 +142,8 @@ function polar(cx: number, cy: number, r: number, deg: number) {
 }
 
 function Speedometer({ fraction }: { fraction: number }) {
+  const t = useT();
+  const lang = useLang();
   const pct = Math.min(Math.max(fraction, 0), 1);
   const cx = 130;
   const cy = 120;
@@ -240,7 +254,7 @@ function Speedometer({ fraction }: { fraction: number }) {
         {pctText}
       </motion.p>
       <p className="mt-1.5 text-[12.5px] text-mut">
-        of a {TOKEN_BUDGET.toLocaleString("en-US")} token budget
+        {t("usage.ofBudget", { n: TOKEN_BUDGET.toLocaleString(lang) })}
       </p>
     </div>
   );
@@ -249,6 +263,7 @@ function Speedometer({ fraction }: { fraction: number }) {
 /* ---------- donut ---------- */
 
 function Donut({ input, output }: { input: number; output: number }) {
+  const t = useT();
   const total = input + output;
   const inFrac = total > 0 ? input / total : 0.5;
   const outFrac = total > 0 ? output / total : 0.5;
@@ -302,20 +317,20 @@ function Donut({ input, output }: { input: number; output: number }) {
           <motion.p className="font-display text-[24px] font-bold leading-none tracking-tight tabular-nums">
             {totalText}
           </motion.p>
-          <p className="mt-1 text-[11.5px] text-mut">tokens</p>
+          <p className="mt-1 text-[11.5px] text-mut">{t("usage.tokens")}</p>
         </div>
       </div>
       <div className="flex items-center gap-5 text-[12.5px]">
         <span className="flex items-center gap-2">
           <span className="size-2.5 rounded-full" style={{ background: SLATE }} />
-          <span className="text-mut">Input</span>
+          <span className="text-mut">{t("usage.input")}</span>
           <span className="font-semibold tabular-nums">
             {total > 0 ? `${Math.round(inFrac * 100)}%` : "—"}
           </span>
         </span>
         <span className="flex items-center gap-2">
           <span className="size-2.5 rounded-full" style={{ background: RED }} />
-          <span className="text-mut">Output</span>
+          <span className="text-mut">{t("usage.output")}</span>
           <span className="font-semibold tabular-nums">
             {total > 0 ? `${Math.round(outFrac * 100)}%` : "—"}
           </span>
@@ -328,12 +343,14 @@ function Donut({ input, output }: { input: number; output: number }) {
 /* ---------- per-request averages ---------- */
 
 function AvgBars({ usage }: { usage: UsageTotals }) {
+  const t = useT();
+  const lang = useLang();
   const avgIn = usage.requests ? usage.input_tokens / usage.requests : 0;
   const avgOut = usage.requests ? usage.output_tokens / usage.requests : 0;
   const max = Math.max(avgIn, avgOut, 1);
   const rows = [
-    { label: "Avg input / request", value: avgIn, color: SLATE },
-    { label: "Avg output / request", value: avgOut, color: RED },
+    { label: "usage.avgIn", value: avgIn, color: SLATE },
+    { label: "usage.avgOut", value: avgOut, color: RED },
   ];
   const perReq = useAnimatedNumber(
     usage.requests ? usage.total_tokens / usage.requests : 0,
@@ -345,15 +362,15 @@ function AvgBars({ usage }: { usage: UsageTotals }) {
         <motion.p className="font-display text-[30px] font-bold leading-none tracking-tight tabular-nums">
           {perReq}
         </motion.p>
-        <p className="mt-1.5 text-[12.5px] text-mut">avg tokens per request</p>
+        <p className="mt-1.5 text-[12.5px] text-mut">{t("usage.avgPerRequest")}</p>
       </div>
       <div className="flex flex-col gap-4">
         {rows.map(({ label, value, color }, i) => (
           <div key={label}>
             <div className="mb-1.5 flex items-center justify-between text-[12px]">
-              <span className="text-mut">{label}</span>
+              <span className="text-mut">{t(label)}</span>
               <span className="font-semibold tabular-nums">
-                {Math.round(value).toLocaleString("en-US")}
+                {Math.round(value).toLocaleString(lang)}
               </span>
             </div>
             <div className="h-2.5 overflow-hidden rounded-full bg-surface-2">
@@ -417,11 +434,11 @@ function bucketize(
   return { buckets, size };
 }
 
-function fmtBucketTime(ts: number, size: number): string {
+function fmtBucketTime(ts: number, size: number, lang: string): string {
   const d = new Date(ts * 1000);
   if (size >= 86400)
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString(lang, { month: "short", day: "numeric" });
+  return d.toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" });
 }
 
 function ActivityChart({
@@ -431,6 +448,8 @@ function ActivityChart({
   events: UsageEvent[];
   since?: number | null;
 }) {
+  const t = useT();
+  const lang = useLang();
   const [hover, setHover] = useState<number | null>(null);
   const { buckets, size } = useMemo(
     () => bucketize(events, since),
@@ -494,15 +513,17 @@ function ActivityChart({
                   animate={{ opacity: 1, y: 0 }}
                   className="absolute bottom-full left-1/2 z-20 mb-2 w-max -translate-x-1/2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[12px] [box-shadow:var(--shadow-lg)]"
                 >
-                  <p className="font-semibold">{fmtBucketTime(b.start, size)}</p>
+                  <p className="font-semibold">{fmtBucketTime(b.start, size, lang)}</p>
                   <p className="mt-1 text-mut">
-                    {b.requests} {b.requests === 1 ? "request" : "requests"}
+                    {t(`usage.request.${new Intl.PluralRules(lang).select(b.requests)}`, {
+                      n: b.requests.toLocaleString(lang),
+                    })}
                   </p>
                   <p className="text-mut">
                     <span style={{ color: SLATE }}>●</span>{" "}
-                    {b.input.toLocaleString("en-US")} in ·{" "}
+                    {t("usage.in", { n: b.input.toLocaleString(lang) })} ·{" "}
                     <span style={{ color: RED }}>●</span>{" "}
-                    {b.output.toLocaleString("en-US")} out
+                    {t("usage.out", { n: b.output.toLocaleString(lang) })}
                   </p>
                 </motion.div>
               )}
@@ -516,7 +537,7 @@ function ActivityChart({
             key={b.start}
             className="flex-1 text-center text-[10.5px] text-faint"
           >
-            {i % labelEvery === 0 ? fmtBucketTime(b.start, size) : ""}
+            {i % labelEvery === 0 ? fmtBucketTime(b.start, size, lang) : ""}
           </span>
         ))}
       </div>
@@ -533,6 +554,7 @@ function RangeTabs({
   value: RangeKey;
   onChange: (k: RangeKey) => void;
 }) {
+  const t = useT();
   return (
     <div className="inline-flex items-center gap-1 rounded-xl border border-line bg-surface-2 p-1">
       {RANGES.map((r) => {
@@ -553,7 +575,7 @@ function RangeTabs({
                 transition={{ type: "spring", stiffness: 420, damping: 34 }}
               />
             )}
-            <span className="relative z-10">{r.label}</span>
+            <span className="relative z-10">{t(r.label)}</span>
           </button>
         );
       })}
@@ -564,6 +586,8 @@ function RangeTabs({
 /* ---------- page ---------- */
 
 export default function UsagePage() {
+  const t = useT();
+  const lang = useLang();
   const { token } = useAuth();
   const [usage, setUsage] = useState<UsageTotals | null>(null);
   const [range, setRange] = useState<RangeKey>("all");
@@ -576,7 +600,7 @@ export default function UsagePage() {
     () => (usage ? deriveView(usage, range) : null),
     [usage, range],
   );
-  const rangeLabel = RANGES.find((r) => r.key === range)?.label ?? "";
+  const rangeLabel = t(`usage.range.${range}`);
 
   const load = useCallback(async () => {
     try {
@@ -619,20 +643,20 @@ export default function UsagePage() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="font-display text-[18px] font-bold tracking-tight">
-            Tenant usage
+            {t("usage.title")}
           </h3>
           <p className="mt-0.5 text-[13.5px] text-mut">
             {usage
               ? range === "all"
-                ? `All-time totals for ${usage.tenant_id}.`
-                : `${rangeLabel} · ${usage.tenant_id}.`
-              : "Token and request accounting."}
+                ? t("usage.sub.allTime", { tenant: usage.tenant_id })
+                : t("usage.sub.range", { range: rangeLabel, tenant: usage.tenant_id })
+              : t("usage.sub.idle")}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <RangeTabs value={range} onChange={setRange} />
           <Button variant="soft" onClick={refresh} busy={busy}>
-            <RefreshCw className="size-4" /> Refresh
+            <RefreshCw className="size-4" /> {t("common.refresh")}
           </Button>
         </div>
       </div>
@@ -641,7 +665,7 @@ export default function UsagePage() {
         <Card>
           <EmptyState
             icon={<Coins className="size-6" />}
-            title="Not available"
+            title={t("usage.notAvailable")}
             hint={error}
           />
         </Card>
@@ -661,7 +685,7 @@ export default function UsagePage() {
                 <Card className="p-6">
                   <div className="flex items-center justify-between">
                     <span className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-mut">
-                      {label}
+                      {t(label)}
                     </span>
                     <span className="grid size-9 place-items-center rounded-lg bg-accent-soft text-accent">
                       <Icon className="size-4" />
@@ -685,8 +709,8 @@ export default function UsagePage() {
             <Card>
               <CardHeader
                 icon={<Wallet className="size-4" />}
-                title="Cost"
-                sub="Priced per model — local inference is free."
+                title={t("usage.cost")}
+                sub={t("usage.cost.sub")}
                 right={
                   <span className="font-display text-[26px] font-bold leading-none tracking-tight tabular-nums">
                     {money(view.cost_usd)}
@@ -699,11 +723,11 @@ export default function UsagePage() {
                     <table className="w-full min-w-[520px] text-left text-[13px]">
                       <thead>
                         <tr className="text-[11px] uppercase tracking-[0.08em] text-mut">
-                          <th className="pb-2 font-semibold">Model</th>
-                          <th className="pb-2 text-right font-semibold">Requests</th>
-                          <th className="pb-2 text-right font-semibold">Input</th>
-                          <th className="pb-2 text-right font-semibold">Output</th>
-                          <th className="pb-2 text-right font-semibold">Cost</th>
+                          <th className="pb-2 font-semibold">{t("usage.th.model")}</th>
+                          <th className="pb-2 text-right font-semibold">{t("usage.th.requests")}</th>
+                          <th className="pb-2 text-right font-semibold">{t("usage.th.input")}</th>
+                          <th className="pb-2 text-right font-semibold">{t("usage.th.output")}</th>
+                          <th className="pb-2 text-right font-semibold">{t("usage.th.cost")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -713,19 +737,19 @@ export default function UsagePage() {
                               {m.model}
                             </td>
                             <td className="py-2.5 text-right tabular-nums">
-                              {m.requests.toLocaleString("en-US")}
+                              {m.requests.toLocaleString(lang)}
                             </td>
                             <td className="py-2.5 text-right tabular-nums text-mut">
-                              {m.input_tokens.toLocaleString("en-US")}
+                              {m.input_tokens.toLocaleString(lang)}
                             </td>
                             <td className="py-2.5 text-right tabular-nums text-mut">
-                              {m.output_tokens.toLocaleString("en-US")}
+                              {m.output_tokens.toLocaleString(lang)}
                             </td>
                             <td className="py-2.5 text-right tabular-nums font-semibold">
                               {m.cost.priced ? (
                                 money(m.cost.total_usd)
                               ) : (
-                                <span className="text-warn">no rate</span>
+                                <span className="text-warn">{t("usage.noRate")}</span>
                               )}
                             </td>
                           </tr>
@@ -735,14 +759,12 @@ export default function UsagePage() {
                   </div>
                 ) : (
                   <p className="text-[13px] text-mut">
-                    No metered requests in this range.
+                    {t("usage.noMetered")}
                   </p>
                 )}
                 {view.unpriced_models.length > 0 && (
                   <p className="mt-4 text-[12px] text-warn">
-                    No price configured for {view.unpriced_models.join(", ")} —
-                    set KARAG_PRICING rather than letting a wrong number reach an
-                    invoice.
+                    {t("usage.noPrice", { models: view.unpriced_models.join(", ") })}
                   </p>
                 )}
               </div>
@@ -759,8 +781,8 @@ export default function UsagePage() {
               <Card className="h-full">
                 <CardHeader
                   icon={<GaugeIcon className="size-4" />}
-                  title="Budget meter"
-                  sub="Share of the token budget consumed."
+                  title={t("usage.budget")}
+                  sub={t("usage.budget.sub")}
                 />
                 <div className="p-6 pt-4">
                   <Speedometer fraction={view.total_tokens / TOKEN_BUDGET} />
@@ -776,8 +798,8 @@ export default function UsagePage() {
               <Card className="h-full">
                 <CardHeader
                   icon={<ChartPie className="size-4" />}
-                  title="Token split"
-                  sub="Prompt tokens in, generated tokens out."
+                  title={t("usage.split")}
+                  sub={t("usage.split.sub")}
                 />
                 <div className="p-6 pt-4">
                   <Donut input={view.input_tokens} output={view.output_tokens} />
@@ -793,8 +815,8 @@ export default function UsagePage() {
               <Card className="h-full">
                 <CardHeader
                   icon={<Scale className="size-4" />}
-                  title="Per request"
-                  sub="Average cost of a single question."
+                  title={t("usage.perRequest")}
+                  sub={t("usage.perRequest.sub")}
                 />
                 <div className="h-[calc(100%-73px)] p-6 pt-4">
                   <AvgBars usage={view} />
@@ -812,18 +834,18 @@ export default function UsagePage() {
             <Card>
               <CardHeader
                 icon={<ChartColumn className="size-4" />}
-                title="Activity"
-                sub="Tokens per interval — stacked input and output."
+                title={t("usage.activity")}
+                sub={t("usage.activity.sub")}
               />
               <div className="p-6">
                 {view.events.length === 0 ? (
                   <EmptyState
                     icon={<ChartColumn className="size-6" />}
-                    title={range === "all" ? "No activity yet" : "Nothing in this window"}
+                    title={range === "all" ? t("usage.noActivity") : t("usage.noWindow")}
                     hint={
                       range === "all"
-                        ? "Ask a question in Chat — every request lands on this timeline."
-                        : "No requests fell in the selected range. Try a wider window."
+                        ? t("usage.noActivity.hint")
+                        : t("usage.noWindow.hint")
                     }
                   />
                 ) : (

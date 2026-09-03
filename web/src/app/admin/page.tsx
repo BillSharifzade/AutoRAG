@@ -9,7 +9,10 @@
  *
  * The signature is the handover panel: a new access key exists exactly once,
  * and the screen treats that as the important moment it is — big, copyable,
- * and honest that it will not be shown again. */
+ * and honest that it will not be shown again.
+ *
+ * There is no language setting anywhere here on purpose: the assistant always
+ * answers in the language of the question. */
 
 import {
   AlarmClock,
@@ -27,17 +30,16 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
 import {
   api,
-  LANGUAGE_LABELS,
   type Account,
   type AlertRule,
   type ApiError,
-  type Language,
   type SkillInfo,
   type Tenant,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useLoad } from "@/lib/use-load";
-import { ROLES, errorWords, roleLabel, whenWords } from "@/lib/words";
+import { errorWords, roleLabel, roles, whenWords } from "@/lib/words";
+import { useT } from "@/i18n";
 import { Button, Input, Picker } from "@/components/ui";
 import {
   ConfirmAction,
@@ -53,22 +55,26 @@ import {
 import { AssistantsSkeleton } from "@/components/skeleton";
 
 /* Roles someone can be given here. Platform-level roles are deliberately
-   absent — they are granted by a platform operator, never from this screen. */
-const GRANTABLE = ROLES.filter(
-  (r) => !["platform_admin", "karag_engineer"].includes(r.value),
-);
+   absent — they are granted by a platform operator, never from this screen.
+   Read inside a component so the labels follow the interface language. */
+const PLATFORM_ROLES = ["platform_admin", "karag_engineer"];
+function grantable() {
+  return roles().filter((r) => !PLATFORM_ROLES.includes(r.value));
+}
 
+/* Check intervals the picker offers; the words live in the dictionary. */
 const HOW_OFTEN = [
-  { value: "900", label: "Every 15 minutes" },
-  { value: "3600", label: "Every hour" },
-  { value: "21600", label: "Every 6 hours" },
-  { value: "86400", label: "Once a day" },
+  { value: "900", key: "admin.every.15m" },
+  { value: "3600", key: "admin.every.1h" },
+  { value: "21600", key: "admin.every.6h" },
+  { value: "86400", key: "admin.every.1d" },
 ];
 
 type Tab = "people" | "alerts" | "companies";
 
 export default function AdminPage() {
   const { token, me } = useAuth();
+  const t = useT();
 
   const isAdmin = Boolean(
     me?.roles.some((r) => ["admin", "ceo", "platform_admin"].includes(r)),
@@ -119,8 +125,8 @@ export default function AdminPage() {
       <Stagger>
         <StaggerItem>
           <Restricted
-            what="Only administrators manage people"
-            who="Adding colleagues, changing what they can see and setting up alerts is limited to administrators and leadership at your company."
+            what={t("admin.restricted.what")}
+            who={t("admin.restricted.who")}
             yourRole={me.roles.map(roleLabel).join(", ")}
           />
         </StaggerItem>
@@ -133,9 +139,9 @@ export default function AdminPage() {
   return (
     <Stagger className="flex flex-col gap-6">
       <PageHero
-        eyebrow="Administration"
-        title="Who's here, and what they can see"
-        lead="Everyone gets their own access key and their own view of the company's knowledge. Change someone's role and it takes effect on their very next question — no waiting, no re-sync."
+        eyebrow={t("admin.eyebrow")}
+        title={t("admin.title")}
+        lead={t("admin.lead")}
       />
 
       {problem && (
@@ -169,12 +175,10 @@ export default function AdminPage() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <h2 className="font-display text-[18px] font-semibold">
-                    {handover.who}&rsquo;s access key
+                    {t("admin.key.title", { who: handover.who })}
                   </h2>
                   <p className="mt-1 text-[13.5px] leading-relaxed text-mut">
-                    Copy it now and give it to them directly. It exists only in
-                    this box — close it and nobody, including you, can read it
-                    again. If it goes missing, make a new one.
+                    {t("admin.key.sub")}
                   </p>
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <code className="min-w-0 flex-1 overflow-x-auto rounded-xl border border-line bg-bg-deep px-4 py-3 font-mono text-[14px] tracking-tight">
@@ -192,11 +196,11 @@ export default function AdminPage() {
                     >
                       {copied ? (
                         <>
-                          <Check className="size-4" /> Copied
+                          <Check className="size-4" /> {t("common.copied")}
                         </>
                       ) : (
                         <>
-                          <Copy className="size-4" /> Copy
+                          <Copy className="size-4" /> {t("common.copy")}
                         </>
                       )}
                     </Button>
@@ -205,7 +209,7 @@ export default function AdminPage() {
                     onClick={() => setHandover(null)}
                     className="mt-4 cursor-pointer text-[13px] font-semibold text-mut transition-colors hover:text-ink"
                   >
-                    I&rsquo;ve saved it — close this
+                    {t("admin.key.close")}
                   </button>
                 </div>
               </div>
@@ -218,12 +222,18 @@ export default function AdminPage() {
         <Segmented
           value={tab}
           onChange={setTab}
-          ariaLabel="What to manage"
+          ariaLabel={t("admin.tabs")}
           options={[
-            { value: "people", label: "People", count: people.length },
-            { value: "alerts", label: "Alerts", count: alerts.length },
+            { value: "people", label: t("admin.tab.people"), count: people.length },
+            { value: "alerts", label: t("admin.tab.alerts"), count: alerts.length },
             ...(isOperator
-              ? ([{ value: "companies", label: "Companies", count: companies.length }] as const)
+              ? ([
+                  {
+                    value: "companies",
+                    label: t("admin.tab.companies"),
+                    count: companies.length,
+                  },
+                ] as const)
               : []),
           ]}
         />
@@ -284,11 +294,13 @@ function People({
   meId?: string;
 }) {
   const { token } = useAuth();
+  const t = useT();
   const [adding, setAdding] = useState(false);
   const [userId, setUserId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [roles, setRoles] = useState<string[]>(["employee"]);
   const [busy, setBusy] = useState(false);
+  const offered = grantable();
 
   async function add() {
     setBusy(true);
@@ -316,16 +328,13 @@ function People({
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
         <div>
           <h2 className="font-display text-[16px] font-semibold">
-            People at your company
+            {t("admin.people.title")}
           </h2>
-          <p className="mt-0.5 text-[13px] text-mut">
-            Each person sees only what their role covers — enforced every time
-            they ask, not just at sign-in.
-          </p>
+          <p className="mt-0.5 text-[13px] text-mut">{t("admin.people.sub")}</p>
         </div>
         {!adding && (
           <Button variant="cta" onClick={() => setAdding(true)}>
-            <UserPlus className="size-4" /> Add someone
+            <UserPlus className="size-4" /> {t("admin.people.add")}
           </Button>
         )}
       </header>
@@ -343,35 +352,35 @@ function People({
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold">
-                    Their name
+                    {t("admin.people.name")}
                   </label>
                   <Input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="Nilufar Rahimova"
+                    placeholder={t("admin.people.namePh")}
                   />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold">
-                    Sign-in ID
+                    {t("admin.people.id")}
                   </label>
                   <Input
                     value={userId}
                     onChange={(e) => setUserId(e.target.value)}
-                    placeholder="nilufar"
+                    placeholder={t("admin.people.idPh")}
                     className="font-mono text-[13px]"
                   />
                   <p className="mt-1.5 text-[12px] text-faint">
-                    Short, no spaces. Appears in the activity log.
+                    {t("admin.people.idHint")}
                   </p>
                 </div>
               </div>
 
               <p className="mb-2 mt-5 text-[13px] font-semibold">
-                What should they be able to see?
+                {t("admin.people.roles")}
               </p>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {GRANTABLE.map((r) => {
+                {offered.map((r) => {
                   const on = roles.includes(r.value);
                   return (
                     <button
@@ -418,10 +427,10 @@ function People({
                   busy={busy}
                   disabled={!userId.trim() || roles.length === 0}
                 >
-                  Create their access key
+                  {t("admin.people.create")}
                 </Button>
                 <Button variant="ghost" onClick={() => setAdding(false)}>
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
               </div>
             </div>
@@ -433,11 +442,11 @@ function People({
         {people.length === 0 ? (
           <Empty
             icon={<Users className="size-6" />}
-            title="Nobody added yet"
-            hint="Add your colleagues one at a time. Each gets their own key and only sees what their role allows."
+            title={t("admin.people.empty")}
+            hint={t("admin.people.emptyHint")}
             action={
               <Button variant="cta" onClick={() => setAdding(true)}>
-                <UserPlus className="size-4" /> Add the first person
+                <UserPlus className="size-4" /> {t("admin.people.addFirst")}
               </Button>
             }
           />
@@ -463,12 +472,12 @@ function People({
                     {p.display_name || p.id}
                     {p.id === meId && (
                       <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-semibold text-mut">
-                        you
+                        {t("admin.people.you")}
                       </span>
                     )}
                     {!p.active && (
                       <span className="rounded-md bg-warn-soft px-1.5 py-0.5 text-[10.5px] font-semibold text-warn">
-                        suspended
+                        {t("admin.people.suspended")}
                       </span>
                     )}
                   </p>
@@ -486,11 +495,11 @@ function People({
                       onProblem(errorWords((e as ApiError).message));
                     }
                   }}
-                  title="Give them a new key — the old one stops working"
+                  title={t("admin.people.rotateHint")}
                   className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12.5px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
                 >
                   <RefreshCw className="size-3.5" />
-                  New key
+                  {t("admin.people.rotate")}
                 </button>
 
                 <button
@@ -502,12 +511,11 @@ function People({
                   }}
                   className="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-lg border border-line px-2.5 text-[12.5px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
                 >
-                  {p.active ? "Suspend" : "Restore"}
+                  {p.active ? t("admin.suspend") : t("admin.restore")}
                 </button>
 
                 <ConfirmAction
-                  question={`Remove ${p.display_name || p.id}?`}
-                  confirmLabel="Yes, remove"
+                  question={t("admin.people.removeQ", { name: p.display_name || p.id })}
                   onConfirm={async () => {
                     await api.accounts.remove(token, p.id).catch(() => {});
                     await onRefresh();
@@ -516,7 +524,9 @@ function People({
                   {(start) => (
                     <button
                       onClick={start}
-                      aria-label={`Remove ${p.display_name || p.id}`}
+                      aria-label={t("admin.people.removeAria", {
+                        name: p.display_name || p.id,
+                      })}
                       className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-faint transition-colors hover:bg-bad-soft hover:text-bad"
                     >
                       <Trash2 className="size-3.5" />
@@ -546,28 +556,27 @@ function Alerts({
   onProblem: (s: string) => void;
 }) {
   const { token } = useAuth();
+  const t = useT();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [lookup, setLookup] = useState("");
   const [every, setEvery] = useState("3600");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const howOften = HOW_OFTEN.map((h) => ({ value: h.value, label: t(h.key) }));
 
   return (
     <section className="overflow-hidden rounded-3xl border border-line bg-surface [box-shadow:var(--shadow)]">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
         <div>
           <h2 className="font-display text-[16px] font-semibold">
-            Messages that send themselves
+            {t("admin.alerts.title")}
           </h2>
-          <p className="mt-0.5 text-[13px] text-mut">
-            Instead of someone remembering to check, KARAG checks on a schedule
-            and only speaks up when there&rsquo;s something to say.
-          </p>
+          <p className="mt-0.5 text-[13px] text-mut">{t("admin.alerts.sub")}</p>
         </div>
         {!adding && lookups.length > 0 && (
           <Button variant="cta" onClick={() => setAdding(true)}>
-            <Plus className="size-4" /> New alert
+            <Plus className="size-4" /> {t("admin.alerts.new")}
           </Button>
         )}
       </header>
@@ -584,23 +593,23 @@ function Alerts({
             <div className="grid gap-4 border-b border-line bg-surface-2 p-6 md:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
-                  What should we call it?
+                  {t("admin.alerts.name")}
                 </label>
                 <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Stock running low"
+                  placeholder={t("admin.alerts.namePh")}
                 />
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
-                  What should it check?
+                  {t("admin.alerts.lookup")}
                 </label>
                 <Picker
                   value={lookup}
                   onChange={setLookup}
-                  placeholder="Choose a lookup…"
-                  ariaLabel="Which lookup"
+                  placeholder={t("admin.alerts.lookupPh")}
+                  ariaLabel={t("admin.alerts.lookupAria")}
                   options={lookups.map((s) => ({
                     value: s.name,
                     label: s.description || s.name,
@@ -609,23 +618,23 @@ function Alerts({
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
-                  How often?
+                  {t("admin.alerts.every")}
                 </label>
                 <Picker
                   value={every}
                   onChange={setEvery}
-                  ariaLabel="How often"
-                  options={HOW_OFTEN}
+                  ariaLabel={t("admin.alerts.everyAria")}
+                  options={howOften}
                 />
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
-                  What should it say?
+                  {t("admin.alerts.message")}
                 </label>
                 <Input
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Some items are running low"
+                  placeholder={t("admin.alerts.messagePh")}
                 />
               </div>
               <div className="flex items-center gap-3 md:col-span-2">
@@ -655,10 +664,10 @@ function Alerts({
                     }
                   }}
                 >
-                  Create alert
+                  {t("admin.alerts.create")}
                 </Button>
                 <Button variant="ghost" onClick={() => setAdding(false)}>
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
               </div>
             </div>
@@ -670,16 +679,16 @@ function Alerts({
         {alerts.length === 0 ? (
           <Empty
             icon={<AlarmClock className="size-6" />}
-            title="No alerts set up"
+            title={t("admin.alerts.empty")}
             hint={
               lookups.length === 0
-                ? "Alerts run a live lookup on a schedule, so you'll need at least one lookup first."
-                : "Pick something worth watching — stock levels, expiring batches, an overdue figure — and KARAG will keep an eye on it for you."
+                ? t("admin.alerts.emptyNoLookup")
+                : t("admin.alerts.emptyHint")
             }
             action={
               lookups.length > 0 ? (
                 <Button variant="cta" onClick={() => setAdding(true)}>
-                  <Plus className="size-4" /> Create one
+                  <Plus className="size-4" /> {t("admin.alerts.createOne")}
                 </Button>
               ) : undefined
             }
@@ -703,12 +712,14 @@ function Alerts({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[14px] font-semibold">{a.name}</p>
                   <p className="truncate text-[12px] text-mut">
-                    {HOW_OFTEN.find((h) => h.value === String(a.interval_s))
-                      ?.label ?? `Every ${Math.round(a.interval_s / 60)} min`}
+                    {howOften.find((h) => h.value === String(a.interval_s))
+                      ?.label ??
+                      t("admin.every.min", { n: Math.round(a.interval_s / 60) })}
+                    {" · "}
                     {a.last_run_at
-                      ? ` · last checked ${whenWords(a.last_run_at)}`
-                      : " · not run yet"}
-                    {a.last_error ? " · last check failed" : ""}
+                      ? t("admin.alerts.lastChecked", { when: whenWords(a.last_run_at) })
+                      : t("admin.alerts.notRun")}
+                    {a.last_error ? ` · ${t("admin.alerts.failed")}` : ""}
                   </p>
                 </div>
                 <button
@@ -720,7 +731,7 @@ function Alerts({
                   }}
                   className="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-lg border border-line px-2.5 text-[12.5px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
                 >
-                  {a.enabled ? "Pause" : "Resume"}
+                  {a.enabled ? t("admin.alerts.pause") : t("admin.alerts.resume")}
                 </button>
                 <button
                   onClick={async () => {
@@ -729,11 +740,11 @@ function Alerts({
                   }}
                   className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12.5px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
                 >
-                  <RefreshCw className="size-3.5" /> Check now
+                  <RefreshCw className="size-3.5" /> {t("admin.alerts.runNow")}
                 </button>
                 <ConfirmAction
-                  question="Delete this alert?"
-                  confirmLabel="Yes, delete"
+                  question={t("admin.alerts.deleteQ")}
+                  confirmLabel={t("admin.alerts.deleteYes")}
                   onConfirm={async () => {
                     await api.alerts.remove(token, a.id).catch(() => {});
                     await onRefresh();
@@ -742,7 +753,7 @@ function Alerts({
                   {(start) => (
                     <button
                       onClick={start}
-                      aria-label={`Delete ${a.name}`}
+                      aria-label={t("admin.alerts.deleteAria", { name: a.name })}
                       className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-faint transition-colors hover:bg-bad-soft hover:text-bad"
                     >
                       <Trash2 className="size-3.5" />
@@ -770,10 +781,10 @@ function Companies({
   onProblem: (s: string) => void;
 }) {
   const { token } = useAuth();
+  const t = useT();
   const [adding, setAdding] = useState(false);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
-  const [lang, setLang] = useState<Language>("auto");
   const [busy, setBusy] = useState(false);
 
   return (
@@ -781,16 +792,13 @@ function Companies({
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
         <div>
           <h2 className="font-display text-[16px] font-semibold">
-            Companies on the platform
+            {t("admin.companies.title")}
           </h2>
-          <p className="mt-0.5 text-[13px] text-mut">
-            Each one is sealed off from the others. No question asked in one can
-            ever reach another&rsquo;s data.
-          </p>
+          <p className="mt-0.5 text-[13px] text-mut">{t("admin.companies.sub")}</p>
         </div>
         {!adding && (
           <Button variant="cta" onClick={() => setAdding(true)}>
-            <Plus className="size-4" /> Add a company
+            <Plus className="size-4" /> {t("admin.companies.add")}
           </Button>
         )}
       </header>
@@ -804,43 +812,29 @@ function Companies({
             transition={{ duration: 0.28, ease: EASE }}
             className="overflow-hidden"
           >
-            <div className="grid gap-4 border-b border-line bg-surface-2 p-6 md:grid-cols-3">
+            <div className="grid gap-4 border-b border-line bg-surface-2 p-6 md:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
-                  Company name
+                  {t("admin.companies.name")}
                 </label>
                 <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Dusti Pharma"
+                  placeholder={t("admin.companies.namePh")}
                 />
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
-                  Short code
+                  {t("admin.companies.code")}
                 </label>
                 <Input
                   value={id}
                   onChange={(e) => setId(e.target.value)}
-                  placeholder="dusti"
+                  placeholder={t("admin.companies.codePh")}
                   className="font-mono text-[13px]"
                 />
               </div>
-              <div>
-                <label className="mb-1.5 block text-[13px] font-semibold">
-                  Default language
-                </label>
-                <Picker
-                  value={lang}
-                  onChange={(v) => setLang(v as Language)}
-                  ariaLabel="Default language"
-                  options={Object.entries(LANGUAGE_LABELS).map(([v, l]) => ({
-                    value: v,
-                    label: v === "auto" ? "Match the question" : l,
-                  }))}
-                />
-              </div>
-              <div className="flex items-center gap-3 md:col-span-3">
+              <div className="flex items-center gap-3 md:col-span-2">
                 <Button
                   variant="cta"
                   busy={busy}
@@ -851,7 +845,6 @@ function Companies({
                       await api.tenants.create(token, {
                         id: id.trim(),
                         name: name.trim(),
-                        default_language: lang,
                       });
                       setAdding(false);
                       setId("");
@@ -864,10 +857,10 @@ function Companies({
                     }
                   }}
                 >
-                  Add company
+                  {t("admin.companies.add")}
                 </Button>
                 <Button variant="ghost" onClick={() => setAdding(false)}>
-                  Cancel
+                  {t("common.cancel")}
                 </Button>
               </div>
             </div>
@@ -879,8 +872,8 @@ function Companies({
         {companies.length === 0 ? (
           <Empty
             icon={<Building2 className="size-6" />}
-            title="No companies yet"
-            hint="Each company gets its own sealed space for knowledge, people and data."
+            title={t("admin.companies.empty")}
+            hint={t("admin.companies.emptyHint")}
           />
         ) : (
           <ul className="flex flex-col gap-2">
@@ -903,15 +896,12 @@ function Companies({
                     {c.name}
                     {!c.active && (
                       <span className="rounded-md bg-warn-soft px-1.5 py-0.5 text-[10.5px] font-semibold text-warn">
-                        suspended
+                        {t("admin.companies.suspended")}
                       </span>
                     )}
                   </p>
                   <p className="truncate text-[12px] text-mut">
-                    Added {whenWords(c.created_at)} · answers in{" "}
-                    {c.default_language === "auto"
-                      ? "whichever language is asked"
-                      : LANGUAGE_LABELS[c.default_language]}
+                    {t("admin.companies.added", { when: whenWords(c.created_at) })}
                   </p>
                 </div>
                 <button
@@ -923,7 +913,7 @@ function Companies({
                   }}
                   className="inline-flex h-8 shrink-0 cursor-pointer items-center rounded-lg border border-line px-2.5 text-[12.5px] font-semibold text-mut transition-colors hover:border-line-strong hover:text-ink"
                 >
-                  {c.active ? "Suspend" : "Restore"}
+                  {c.active ? t("admin.suspend") : t("admin.restore")}
                 </button>
               </li>
             ))}

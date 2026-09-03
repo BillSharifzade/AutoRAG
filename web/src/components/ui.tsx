@@ -12,6 +12,7 @@ import {
   type ReactNode,
   type TextareaHTMLAttributes,
 } from "react";
+import { useT } from "@/i18n";
 
 /* ---------- brand ---------- */
 
@@ -164,9 +165,10 @@ export function Picker({
   options,
   className = "",
   ariaLabel,
-  placeholder = "Select…",
+  placeholder,
   compact = false,
   dropUp = false,
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -178,7 +180,9 @@ export function Picker({
   compact?: boolean;
   /** open the list above the trigger (composer sits at screen bottom) */
   dropUp?: boolean;
+  disabled?: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -208,6 +212,7 @@ export function Picker({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className={
           compact
@@ -220,7 +225,7 @@ export function Picker({
         }
       >
         <span className={`truncate ${current ? "" : "text-faint"}`}>
-          {current?.label ?? placeholder}
+          {current?.label ?? placeholder ?? t("common.select")}
         </span>
         <ChevronDown
           className={`size-4 shrink-0 text-faint transition-transform duration-200 ${
@@ -339,8 +344,9 @@ export function EmptyState({
 }
 
 export function TypingDots() {
+  const t = useT();
   return (
-    <span className="inline-flex items-center gap-1 px-1" aria-label="thinking">
+    <span className="inline-flex items-center gap-1 px-1" aria-label={t("ui.thinking")}>
       <span className="typing-dot size-1.5 rounded-full bg-accent" />
       <span className="typing-dot size-1.5 rounded-full bg-accent" />
       <span className="typing-dot size-1.5 rounded-full bg-accent" />

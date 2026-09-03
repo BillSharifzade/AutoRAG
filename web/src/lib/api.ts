@@ -21,7 +21,8 @@ export interface ArtifactPayload {
 export interface Answer {
   text: string;
   citations: Citation[];
-  plane: "knowledge" | "data" | "mixed" | "refusal";
+  /** `error` / `stopped` only appear on turns reloaded from history */
+  plane: "knowledge" | "data" | "mixed" | "refusal" | "error" | "stopped";
   skills_used: string[];
   queries_shown: string[];
   artifacts: ArtifactPayload[];
@@ -37,14 +38,27 @@ export interface Assistant {
   id: string;
   name: string;
   instruction: string;
+  /** null = everything the person may use · [] = documents only · list = exactly those */
   allowed_skill_names: string[] | null;
+  /** kept by the API for compatibility; answers always follow the question */
   language: Language;
+  created_by: string;
+  /** the caller made it, or holds an administrator role */
+  can_edit: boolean;
+}
+
+/** Fields omitted from an update stay as they were. */
+export interface AssistantUpdate {
+  name?: string;
+  instruction?: string;
+  allowed_skill_names?: string[] | null;
 }
 
 /* ---------- language (§2: RU / TJ are the moat) ---------- */
 
 export type Language = "auto" | "ru" | "tg" | "en";
 
+/** @deprecated the answer always follows the question; kept for old payloads */
 export const LANGUAGE_LABELS: Record<Language, string> = {
   auto: "Match the question",
   ru: "Русский",
@@ -119,7 +133,37 @@ export interface Classification {
 
 /* ---------- connectors + authored skills (§5, §6) ---------- */
 
-export type ConnectorKind = "sql_sqlite" | "sql_postgres" | "rest";
+export type ConnectorKind = "sql_sqlite" | "sql_postgres" | "sql_mysql" | "rest";
+
+/** What the guided database flow learned and decided (empty for a connector
+    made by hand on the Skills page). */
+export interface ConnectorMeta {
+  source?: "connect" | "upload";
+  description?: string;
+  summary?: string;
+  table_meanings?: Record<string, string>;
+  schema_summary?: string;
+  table_count?: number;
+  data_class?: DataClass;
+  required_roles?: string[];
+  free_query?: boolean;
+  knowledge?: boolean;
+  language?: string;
+  comment?: string;
+  document_id?: string;
+  host?: string;
+  database?: string;
+  filename?: string;
+  bytes?: number;
+  import?: {
+    statements: number;
+    executed: number;
+    failed: { statement: string; error: string }[];
+    failed_count: number;
+    tables: string[];
+    rows: number;
+  };
+}
 
 export interface Connector {
   id: string;
@@ -131,6 +175,129 @@ export interface Connector {
   timeout_s: number;
   created_by: string;
   created_at: number;
+  metadata: ConnectorMeta;
+}
+
+/* ---------- guided integrations: API sources ---------- */
+
+export interface PayloadField {
+  name: string;
+  types: string[];
+  samples: unknown[];
+  filled: number;
+}
+
+export interface PayloadProfile {
+  kind: "records" | "object" | "scalar" | "text";
+  record_count: number;
+  fields: PayloadField[];
+  records_path: string;
+  sample: unknown[];
+  text_preview: string;
+  top_level_keys: string[];
+}
+
+export interface PayloadAnalysis {
+  summary: string;
+  suggested_name: string;
+  suggested_description: string;
+  fields: { name: string; meaning: string }[];
+  concerns: string[];
+  looks_right: boolean;
+  source: "model" | "model_text" | "heuristic";
+}
+
+export interface ProbeResult {
+  url: string;
+  content_type: string;
+  kind: "json" | "csv" | "text";
+  bytes: number;
+  truncated: boolean;
+  profile: PayloadProfile;
+  analysis: PayloadAnalysis;
+}
+
+export interface DataSource {
+  id: string;
+  tenant_id: string;
+  name: string;
+  url: string;
+  description: string;
+  field_notes: Record<string, string>;
+  data_class: DataClass;
+  required_roles: string[];
+  skill_enabled: boolean;
+  skill_name: string;
+  sync_enabled: boolean;
+  sync_interval_s: number;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+  last_synced_at: number;
+  last_checked_at: number;
+  last_status: "" | "ok" | "unchanged" | "error";
+  last_error: string;
+  last_records: number;
+  document_id: string;
+}
+
+export interface DataSourceInput {
+  name: string;
+  url: string;
+  description: string;
+  field_notes: Record<string, string>;
+  data_class: DataClass;
+  required_roles: string[];
+  skill_enabled: boolean;
+  sync_enabled: boolean;
+  sync_interval_s: number;
+}
+
+/* ---------- guided integrations: databases ---------- */
+
+export interface DbColumn {
+  name: string;
+  type: string;
+}
+
+export interface DbTable {
+  name: string;
+  kind: "table" | "view";
+  schema: string;
+  columns: DbColumn[];
+  row_estimate: number | null;
+  sample: Record<string, unknown>[];
+}
+
+export interface DbSchema {
+  backend: "sqlite" | "postgres" | "mysql";
+  table_count: number;
+  truncated: boolean;
+  tables: DbTable[];
+}
+
+export interface DbReport {
+  summary: string;
+  suggested_description: string;
+  tables: { name: string; meaning: string }[];
+  concerns: string[];
+  source: "model" | "model_text" | "heuristic";
+}
+
+export interface DbConnectResult {
+  connector: Connector;
+  schema: DbSchema;
+  report: DbReport;
+}
+
+export interface DbLogin {
+  kind: "sql_postgres" | "sql_mysql";
+  host: string;
+  port: number | null;
+  database: string;
+  username: string;
+  password: string;
+  ssl: boolean;
 }
 
 /** `sql`/`rest` fetch a number; `agent` is a SKILL.md that teaches a procedure. */
@@ -180,6 +347,9 @@ export interface SkillDefinitionInput {
   required_roles: string[];
   row_limit: number | null;
   shared: boolean;
+  /** omit to leave as is; false keeps the skill stored but not offered */
+  enabled?: boolean;
+  inject_tenant?: boolean;
 }
 
 export interface SkillTestRun {
@@ -320,6 +490,23 @@ export interface ChatAskResult {
   answer: Answer;
   title: string;
   updated_at: number | null;
+  /** the chat's assistant has been deleted; this turn ran with the default one */
+  assistant_missing?: boolean;
+}
+
+/** One Server-Sent Event of a streamed chat turn. */
+export type ChatStreamEvent =
+  | { type: "status"; stage: "retrieving" | "thinking" }
+  | { type: "tool"; name: string; status: "start" | "done" | "error" }
+  | { type: "delta"; text: string }
+  | ({ type: "done" } & ChatAskResult)
+  | { type: "error"; status: number; detail: string };
+
+export interface IngestResult {
+  document_id: string;
+  data_class: string;
+  /** ids of same-titled documents this upload replaced */
+  replaced: string[];
 }
 
 /** Read a File/Blob into raw base64 (no data-URL prefix). */
@@ -444,19 +631,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ language: "auto", ...body }),
     }),
-    update: (
-      token: string,
-      id: string,
-      body: {
-        name: string;
-        instruction: string;
-        allowed_skill_names: string[] | null;
-        language?: Language;
-      },
-    ) => request<Assistant>(token, `/v1/assistants/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ language: "auto", ...body }),
-    }),
+    update: (token: string, id: string, body: AssistantUpdate) =>
+      request<Assistant>(token, `/v1/assistants/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
     remove: (token: string, id: string) =>
       request<{ deleted: string }>(token, `/v1/assistants/${id}`, {
         method: "DELETE",
@@ -479,6 +658,98 @@ export const api = {
         body: fd,
       });
     },
+  },
+
+  sources: {
+    /** Fetch the endpoint once and have it explained. Stores nothing. */
+    probe: (
+      token: string,
+      body: { url: string; language?: string; comment?: string; previous?: PayloadAnalysis | null },
+    ) => request<ProbeResult>(token, "/v1/sources/probe", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+    list: (token: string) => request<{ sources: DataSource[] }>(token, "/v1/sources"),
+    create: (token: string, body: DataSourceInput) =>
+      request<DataSource>(token, "/v1/sources", { method: "POST", body: JSON.stringify(body) }),
+    get: (token: string, id: string) => request<DataSource>(token, `/v1/sources/${id}`),
+    update: (token: string, id: string, body: Partial<DataSourceInput>) =>
+      request<DataSource>(token, `/v1/sources/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+    remove: (token: string, id: string) =>
+      request<{ deleted: string }>(token, `/v1/sources/${id}`, { method: "DELETE" }),
+    sync: (token: string, id: string) =>
+      request<{ status: DataSource["last_status"]; records: number; error: string; source: DataSource }>(
+        token,
+        `/v1/sources/${id}/sync`,
+        { method: "POST" },
+      ),
+  },
+
+  databases: {
+    test: (token: string, body: DbLogin) =>
+      request<{ ok: boolean; tables: number; backend: string }>(token, "/v1/databases/test", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    connect: (
+      token: string,
+      body: DbLogin & {
+        name: string;
+        data_class: DataClass;
+        required_roles: string[];
+        free_query: boolean;
+        knowledge: boolean;
+        language: string;
+        comment?: string;
+      },
+    ) => request<DbConnectResult>(token, "/v1/databases/connect", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+    upload: (
+      token: string,
+      file: File,
+      fields: {
+        name: string;
+        data_class: DataClass;
+        required_roles: string[];
+        free_query: boolean;
+        knowledge: boolean;
+        language: string;
+        comment?: string;
+      },
+    ) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("name", fields.name);
+      fd.append("data_class", fields.data_class);
+      fd.append("required_roles", fields.required_roles.join(","));
+      fd.append("free_query", String(fields.free_query));
+      fd.append("knowledge", String(fields.knowledge));
+      fd.append("language", fields.language);
+      fd.append("comment", fields.comment ?? "");
+      return request<DbConnectResult>(token, "/v1/databases/upload", { method: "POST", body: fd });
+    },
+    schema: (token: string, id: string) => request<DbSchema>(token, `/v1/databases/${id}/schema`),
+    describe: (token: string, id: string, body: { comment: string; language?: string }) =>
+      request<DbConnectResult>(token, `/v1/databases/${id}/describe`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    update: (
+      token: string,
+      id: string,
+      body: {
+        name?: string;
+        free_query?: boolean;
+        knowledge?: boolean;
+        data_class?: DataClass;
+        required_roles?: string[];
+        description?: string;
+      },
+    ) => request<Connector>(token, `/v1/databases/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    remove: (token: string, id: string) =>
+      request<{ deleted: string }>(token, `/v1/databases/${id}`, { method: "DELETE" }),
   },
 
   connectors: {
@@ -633,7 +904,7 @@ export const api = {
     token: string,
     body: { title: string; text: string; data_class: string },
   ) =>
-    request<{ document_id: string; data_class: string }>(token, "/v1/ingest", {
+    request<IngestResult>(token, "/v1/ingest", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -642,11 +913,10 @@ export const api = {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("data_class", dataClass);
-    return request<{ document_id: string; data_class: string }>(
-      token,
-      "/v1/ingest/file",
-      { method: "POST", body: fd },
-    );
+    return request<IngestResult>(token, "/v1/ingest/file", {
+      method: "POST",
+      body: fd,
+    });
   },
 
   chats: {
@@ -688,6 +958,20 @@ export const api = {
           language: language ?? null,
         }),
       }),
+    /** The same turn as `ask`, but the answer arrives as it is written.
+        Aborting the signal closes the connection, which stops the turn on
+        the server too. */
+    stream: (
+      token: string,
+      id: string,
+      query: string,
+      attachments?: ChatAttachment[],
+      signal?: AbortSignal,
+    ) =>
+      streamEvents(token, `/v1/chats/${id}/stream`, {
+        query,
+        attachments: attachments ?? [],
+      }, signal),
   },
 
   audit: (token: string) =>
@@ -695,6 +979,59 @@ export const api = {
 
   usage: (token: string) => request<UsageTotals>(token, "/v1/usage"),
 };
+
+/** POST a JSON body and read the response as Server-Sent Events. */
+async function* streamEvents(
+  token: string,
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): AsyncGenerator<ChatStreamEvent> {
+  const res = await fetch(path, {
+    method: "POST",
+    signal,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data && typeof data === "object" && "detail" in data)
+        detail = String((data as { detail: unknown }).detail);
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(detail, res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut = buffer.indexOf("\n\n");
+      while (cut !== -1) {
+        const frame = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("data: ")) {
+            yield JSON.parse(line.slice(6)) as ChatStreamEvent;
+          }
+        }
+        cut = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 /** Trigger a browser download for a base64-encoded artifact. */
 export function downloadArtifact(a: ArtifactPayload): void {

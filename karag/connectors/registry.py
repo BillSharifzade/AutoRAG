@@ -23,19 +23,43 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from urllib.parse import quote
+
 from ..domain import new_id
 from ..errors import KaragError, NotFoundError, ValidationError
+from ..secrets import seal, unseal
 from .rest import RestConnector
 from .sql import SqlConnector
 
 # connector kinds understood by :func:`build_connector`
 SQLITE = "sql_sqlite"
 POSTGRES = "sql_postgres"
+MYSQL = "sql_mysql"
 REST = "rest"
-KINDS = (SQLITE, POSTGRES, REST)
+KINDS = (SQLITE, POSTGRES, MYSQL, REST)
+SQL_KINDS = (SQLITE, POSTGRES, MYSQL)
 
 # config keys whose values are secrets: redacted whenever a spec is serialised
+# and sealed (encrypted) at rest when KARAG_SECRET_KEY is configured
 _SECRET_KEYS = frozenset({"dsn", "path", "headers", "token", "password"})
+
+
+def build_dsn(kind: str, *, host: str, port: int | None, database: str,
+              username: str, password: str, ssl: bool = False) -> str:
+    """A DSN from the pieces a person can type: no engineer needed for the URL."""
+    if kind not in (POSTGRES, MYSQL):
+        raise ValidationError("a DSN can be built for postgres or mysql only")
+    if not host.strip() or not database.strip():
+        raise ValidationError("host and database name are required")
+    scheme = "postgresql" if kind == POSTGRES else "mysql"
+    default_port = 5432 if kind == POSTGRES else 3306
+    auth = quote(username, safe="")
+    if password:
+        auth += ":" + quote(password, safe="")
+    dsn = f"{scheme}://{auth}@{host.strip()}:{int(port or default_port)}/{database.strip()}"
+    if ssl:
+        dsn += "?sslmode=require" if kind == POSTGRES else "?ssl=1"
+    return dsn
 
 
 class ConnectorNotFound(NotFoundError):
@@ -48,6 +72,7 @@ def resolve_secret(value: str) -> str:
     Lets an operator keep the real DSN/token in the environment (or a secrets
     manager that populates it) while the database only stores the *name*.
     """
+    value = unseal(value) if isinstance(value, str) else value
     if isinstance(value, str) and value.startswith("env:"):
         name = value[4:]
         resolved = os.environ.get(name)
@@ -55,6 +80,16 @@ def resolve_secret(value: str) -> str:
             raise KaragError(f"connector references missing env var {name!r}")
         return resolved
     return value
+
+
+def seal_config(config: dict) -> dict:
+    """Seal every secret-bearing value before the spec is stored."""
+    out = dict(config)
+    for key in _SECRET_KEYS:
+        value = out.get(key)
+        if isinstance(value, str):
+            out[key] = seal(value)
+    return out
 
 
 @dataclass
@@ -70,6 +105,11 @@ class ConnectorSpec:
     timeout_s: float = 5.0
     created_by: str = ""
     created_at: float = field(default_factory=time.time)
+    # What the guided onboarding learned and decided: a plain-language
+    # description, the compact schema the query skill is described with, the
+    # audience, whether the assistant may write its own read-only queries, the
+    # knowledge document that describes the database, an upload's import report.
+    metadata: dict = field(default_factory=dict)
 
     def to_public_dict(self) -> dict:
         """Serialisation safe to send over HTTP: secrets replaced by a marker."""
@@ -82,6 +122,7 @@ class ConnectorSpec:
             "timeout_s": self.timeout_s,
             "created_by": self.created_by,
             "created_at": self.created_at,
+            "metadata": self.metadata,
         }
 
 
@@ -100,11 +141,15 @@ def _redact(config: dict) -> dict:
     return out
 
 
+def is_sql_kind(kind: str) -> bool:
+    return kind in SQL_KINDS
+
+
 def validate_spec(kind: str, config: dict) -> None:
     """Reject a connector definition that couldn't possibly be safe/valid."""
     if kind not in KINDS:
         raise ValidationError(f"unknown connector kind {kind!r}; expected one of {KINDS}")
-    if kind in (SQLITE, POSTGRES):
+    if kind in SQL_KINDS:
         key = "path" if kind == SQLITE else "dsn"
         if not config.get(key):
             raise ValidationError(f"{kind} connector requires config.{key}")
@@ -135,12 +180,20 @@ def build_connector(spec: ConnectorSpec) -> SqlConnector | RestConnector:
             default_row_limit=spec.row_limit,
             timeout_s=spec.timeout_s,
         )
+    if spec.kind == MYSQL:
+        return SqlConnector(
+            mysql_dsn=resolve_secret(spec.config["dsn"]),
+            default_row_limit=spec.row_limit,
+            timeout_s=spec.timeout_s,
+        )
     if spec.kind == REST:
         raw_headers = spec.config.get("headers") or {}
         headers = {k: resolve_secret(v) for k, v in raw_headers.items()}
+        allow_private = str(spec.config.get("allow_private", "")).lower() in ("1", "true", "yes")
         return RestConnector(
             resolve_secret(spec.config["base_url"]),
             headers=headers,
+            allow_private=allow_private,
             timeout_s=spec.timeout_s,
         )
     raise ValidationError(f"unknown connector kind {spec.kind!r}")
@@ -148,8 +201,10 @@ def build_connector(spec: ConnectorSpec) -> SqlConnector | RestConnector:
 
 class ConnectorStore(Protocol):
     def create(self, spec: ConnectorSpec) -> ConnectorSpec: ...
+    def update(self, spec: ConnectorSpec) -> ConnectorSpec: ...
     def get(self, tenant_id: str, connector_id: str) -> ConnectorSpec | None: ...
     def list(self, tenant_id: str) -> list[ConnectorSpec]: ...
+    def list_all(self) -> list[ConnectorSpec]: ...
     def delete(self, tenant_id: str, connector_id: str) -> bool: ...
 
 
@@ -160,6 +215,13 @@ class InMemoryConnectorStore:
     def create(self, spec: ConnectorSpec) -> ConnectorSpec:
         self._by_id[spec.id] = spec
         return spec
+
+    def update(self, spec: ConnectorSpec) -> ConnectorSpec:
+        self._by_id[spec.id] = spec
+        return spec
+
+    def list_all(self) -> list[ConnectorSpec]:
+        return sorted(self._by_id.values(), key=lambda s: s.created_at)
 
     def get(self, tenant_id: str, connector_id: str) -> ConnectorSpec | None:
         spec = self._by_id.get(connector_id)
@@ -190,7 +252,8 @@ CREATE TABLE IF NOT EXISTS connectors (
     row_limit  INTEGER NOT NULL,
     timeout_s  REAL NOT NULL,
     created_by TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    metadata   TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS connectors_tenant ON connectors (tenant_id, created_at);
 """
@@ -206,16 +269,34 @@ class SqliteConnectorStore:
         self._lock = threading.Lock()
         with self._conn:
             self._conn.executescript(_SCHEMA)
+            # a database created before metadata existed gets the column added
+            have = {r["name"] for r in self._conn.execute("PRAGMA table_info(connectors)")}
+            if "metadata" not in have:
+                self._conn.execute(
+                    "ALTER TABLE connectors ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'"
+                )
 
     def create(self, spec: ConnectorSpec) -> ConnectorSpec:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO connectors (id, tenant_id, name, kind, config, row_limit,"
-                " timeout_s, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                " timeout_s, created_by, created_at, metadata) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     spec.id, spec.tenant_id, spec.name, spec.kind,
                     json.dumps(spec.config), spec.row_limit, spec.timeout_s,
-                    spec.created_by, spec.created_at,
+                    spec.created_by, spec.created_at, json.dumps(spec.metadata),
+                ),
+            )
+        return spec
+
+    def update(self, spec: ConnectorSpec) -> ConnectorSpec:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE connectors SET name=?, config=?, row_limit=?, timeout_s=?,"
+                " metadata=? WHERE id=? AND tenant_id=?",
+                (
+                    spec.name, json.dumps(spec.config), spec.row_limit, spec.timeout_s,
+                    json.dumps(spec.metadata), spec.id, spec.tenant_id,
                 ),
             )
         return spec
@@ -264,6 +345,7 @@ def _row_to_spec(row: sqlite3.Row) -> ConnectorSpec:
         timeout_s=row["timeout_s"],
         created_by=row["created_by"],
         created_at=row["created_at"],
+        metadata=json.loads(row["metadata"] or "{}") if "metadata" in row.keys() else {},
     )
 
 
@@ -276,16 +358,18 @@ def new_connector(
     row_limit: int = 1000,
     timeout_s: float = 5.0,
     created_by: str = "",
+    metadata: dict | None = None,
 ) -> ConnectorSpec:
-    """Validate and build a spec (not yet stored)."""
+    """Validate and build a spec (not yet stored). Secrets are sealed here."""
     validate_spec(kind, config)
     return ConnectorSpec(
         id=new_id("conn"),
         tenant_id=tenant_id,
         name=name,
         kind=kind,
-        config=config,
+        config=seal_config(config),
         row_limit=row_limit,
         timeout_s=timeout_s,
         created_by=created_by,
+        metadata=dict(metadata or {}),
     )

@@ -15,9 +15,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 from ..domain import Vector
+
+# Called with each piece of answer text as the provider produces it. Adapters
+# that cannot stream simply never call it; the caller must not depend on it
+# having been called to learn the final text — that always comes from the
+# returned :class:`LLMResponse`.
+DeltaCallback = Callable[[str], Awaitable[None]]
 
 
 class MsgRole(str, Enum):
@@ -70,7 +76,7 @@ class ToolCall:
 class LLMResponse:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
-    stop_reason: str = "end_turn"  # end_turn | tool_use | refusal
+    stop_reason: str = "end_turn"  # end_turn | tool_use | refusal | max_tokens
     usage: dict = field(default_factory=dict)
 
 
@@ -91,6 +97,7 @@ class Generator(Protocol):
         system: str,
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
+        on_delta: DeltaCallback | None = None,
     ) -> LLMResponse: ...
 
 
@@ -118,7 +125,9 @@ class Gateway:
         system: str,
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
+        on_delta: DeltaCallback | None = None,
     ) -> LLMResponse:
+        extra = {"on_delta": on_delta} if on_delta is not None else {}
         return await self.generator.generate(
-            system=system, messages=messages, tools=tools
+            system=system, messages=messages, tools=tools, **extra
         )

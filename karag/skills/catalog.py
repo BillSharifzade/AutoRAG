@@ -40,6 +40,8 @@ from ..rbac import can_access
 from .agent_skill import SkillResource, make_agent_skill
 from .base import Skill
 from .definitions import (
+    infer_param_schema,
+    sql_bindings,
     AGENT,
     CONNECTOR_KINDS,
     REST,
@@ -61,6 +63,19 @@ AUTHOR_ROLES: frozenset[str] = frozenset({"admin", "skill_author", "ceo"})
 
 def can_author(principal: Principal) -> bool:
     return principal.has_any_role(AUTHOR_ROLES)
+
+
+def _require_matching_connector(skill_kind: str, connector_kind: str) -> None:
+    """A SQL lookup runs on a database, a REST lookup on an API — never crossed.
+
+    Without this check the mismatch only surfaces when the model calls the
+    skill, as an attribute error inside the turn.
+    """
+    is_sql_connector = connector_kind.startswith("sql_")
+    if skill_kind == SQL and not is_sql_connector:
+        raise ValidationError("a SQL lookup needs a database connection, not an API")
+    if skill_kind == REST and is_sql_connector:
+        raise ValidationError("a REST lookup needs an API connection, not a database")
 
 
 @dataclass
@@ -110,6 +125,7 @@ class SkillCatalog:
         config: dict,
         row_limit: int = 1000,
         timeout_s: float = 5.0,
+        metadata: dict | None = None,
     ) -> ConnectorSpec:
         self._require_author(principal, "connector_create", name)
         spec = new_connector(
@@ -120,6 +136,7 @@ class SkillCatalog:
             row_limit=row_limit,
             timeout_s=timeout_s,
             created_by=principal.user_id,
+            metadata=metadata,
         )
         self._connectors.create(spec)
         self._log(principal, "connector_create", "allow", spec.id, {"kind": kind})
@@ -177,10 +194,15 @@ class SkillCatalog:
         # what stops a skill from being pointed at another company's data
         # source. An agent skill reaches no data source, so it names none.
         if kind in CONNECTOR_KINDS:
-            if self._connectors.get(principal.tenant_id, connector_id) is None:
+            spec = self._connectors.get(principal.tenant_id, connector_id)
+            if spec is None:
                 raise ConnectorNotFound(connector_id)
+            _require_matching_connector(kind, spec.kind)
         else:
             connector_id = ""
+        self._require_free_name(principal.tenant_id, name)
+        if kind == SQL and not param_schema:
+            param_schema = infer_param_schema(sql)
 
         defn = new_definition(
             principal.tenant_id,
@@ -236,10 +258,17 @@ class SkillCatalog:
         # a skill switched to `agent` no longer needs a connector, and one
         # switched to `sql` must have a real one before it is stored.
         if defn.kind in CONNECTOR_KINDS:
-            if self._connectors.get(principal.tenant_id, defn.connector_id) is None:
+            spec = self._connectors.get(principal.tenant_id, defn.connector_id)
+            if spec is None:
                 raise ConnectorNotFound(defn.connector_id)
+            _require_matching_connector(defn.kind, spec.kind)
         else:
             defn.connector_id = ""
+        if defn.name != old_name:
+            self._require_free_name(principal.tenant_id, defn.name)
+        if defn.kind == SQL and not (defn.param_schema or {}).get("properties") \
+                and sql_bindings(defn.sql) - {"tenant_id"}:
+            defn.param_schema = infer_param_schema(defn.sql)
 
         validate_definition(defn)
         self._defs.update(defn)
@@ -424,6 +453,18 @@ class SkillCatalog:
         return loaded, errors
 
     # ---- guards ----------------------------------------------------------
+
+    def _require_free_name(self, tenant_id: str, name: str) -> None:
+        """A tenant skill may not shadow a platform-wide tool.
+
+        Two tools with one name reach the model as duplicates, which the
+        provider rejects — and the one that would win is the tenant's, which
+        could quietly replace ``create_spreadsheet`` with something else.
+        """
+        if self._registry.get("*", name) is not None:
+            raise ValidationError(
+                f"{name!r} is the name of a built-in tool; choose another name"
+            )
 
     def _require_author(self, principal: Principal, action: str, resource: str) -> None:
         if not can_author(principal):

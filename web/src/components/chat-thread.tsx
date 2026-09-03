@@ -50,45 +50,58 @@ import {
   toBase64,
   type Answer,
   type Assistant,
-  type ChatAttachment,
   type Citation,
 } from "@/lib/api";
+import { useLocale, useT, type Locale } from "@/i18n";
 import { useAuth } from "@/lib/auth";
-import { useChatEngine, type Att, type ChatEngine, type Turn } from "@/lib/chat-store";
+import {
+  useChatEngine,
+  type Att,
+  type ChatEngine,
+  type Runner,
+  type Turn,
+  type TurnStatus,
+} from "@/lib/chat-store";
+import { roleLabel } from "@/lib/words";
+import { Notice } from "@/components/pro";
 import { BrandLogo, Button, Chip, Picker, TypingDots } from "@/components/ui";
 
-const PLANE_META = {
-  knowledge: { icon: BookOpenText, label: "knowledge" },
-  data: { icon: Database, label: "data" },
-  mixed: { icon: Sparkles, label: "knowledge + data" },
-  refusal: { icon: ShieldAlert, label: "refused" },
+const PLANE_ICON = {
+  knowledge: BookOpenText,
+  data: Database,
+  mixed: Sparkles,
+  refusal: ShieldAlert,
+  error: ShieldAlert,
+  stopped: Square,
 } as const;
 
 /* Four openers, one per thing the assistant can actually do — look something
    up in a document, fetch a live figure, build a file, and answer from a
-   restricted class. Written as the question a person would say out loud. */
+   restricted class. Written as the question a person would say out loud; the
+   words live in the dictionary so the opener is in the reader's language. */
 const SUGGESTIONS = [
-  {
-    icon: BookOpenText,
-    label: "Check a rule",
-    query: "How long do customers have to return something unopened?",
-  },
-  {
-    icon: TrendingUp,
-    label: "Get today's number",
-    query: "What did store 5 sell on 31 July?",
-  },
-  {
-    icon: FileSpreadsheet,
-    label: "Make a spreadsheet",
-    query: "Put store 5's recent sales into an Excel file I can download",
-  },
-  {
-    icon: Database,
-    label: "Look up a figure",
-    query: "What was our Q2 revenue and net profit?",
-  },
+  { icon: BookOpenText, key: "rule" },
+  { icon: TrendingUp, key: "number" },
+  { icon: FileSpreadsheet, key: "sheet" },
+  { icon: Database, key: "figure" },
 ];
+
+/** Which plural form a count takes: Russian has three, English two. */
+function plural(locale: Locale, n: number): "one" | "few" | "many" {
+  if (locale === "ru") {
+    const m10 = n % 10;
+    const m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return "one";
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return "few";
+    return "many";
+  }
+  return n === 1 ? "one" : "many";
+}
+
+/** `store_sales` → "store sales", for a status line a person reads. */
+function humanise(name: string): string {
+  return name.replace(/[_-]+/g, " ");
+}
 
 const ACCEPT =
   "image/png,image/jpeg,image/webp,image/gif,.pdf,.docx,.xlsx,.pptx,.csv,.txt,.md";
@@ -111,20 +124,21 @@ function balanceFences(text: string): string {
 }
 
 function PlaneBadge({ plane }: { plane: Answer["plane"] }) {
-  const meta = PLANE_META[plane] ?? PLANE_META.knowledge;
-  const Icon = meta.icon;
+  const t = useT();
+  const Icon = PLANE_ICON[plane] ?? PLANE_ICON.knowledge;
   return (
-    <Chip tone={plane === "refusal" ? "bad" : "accent"}>
-      <Icon className="size-3" /> {meta.label}
+    <Chip tone={plane === "refusal" || plane === "error" ? "bad" : "accent"}>
+      <Icon className="size-3" /> {t(`chat.plane.${plane}`)}
     </Chip>
   );
 }
 
 function CopyButton({ text }: { text: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   return (
     <button
-      title="Copy"
+      title={t("common.copy")}
       onClick={() => {
         void navigator.clipboard.writeText(text);
         setCopied(true);
@@ -148,6 +162,7 @@ function AttachmentChips({
   atts: Att[];
   onRemove?: (id: string) => void;
 }) {
+  const t = useT();
   if (atts.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -167,13 +182,13 @@ function AttachmentChips({
               ) : (
                 <FileText className="size-4 text-accent" />
               )}
-              {a.label ?? a.filename}
+              {a.kind === "audio" ? `${t("chat.voiceNote")}${a.label && a.label !== "voice" ? ` · ${a.label}` : ""}` : a.filename}
             </span>
           )}
           {onRemove && (
             <button
               type="button"
-              aria-label={`Remove ${a.filename}`}
+              aria-label={t("chat.removeAttachment", { name: a.filename })}
               onClick={() => onRemove(a.id)}
               className="absolute -right-1.5 -top-1.5 grid size-5 cursor-pointer place-items-center rounded-full bg-ink text-bg opacity-0 transition-opacity group-hover/att:opacity-100"
             >
@@ -214,6 +229,8 @@ function WebSource({ c }: { c: Citation }) {
 }
 
 function AnswerExtras({ answer }: { answer: Answer }) {
+  const t = useT();
+  const { locale } = useLocale();
   const hasMeta =
     answer.citations.length > 0 ||
     answer.skills_used.length > 0 ||
@@ -255,7 +272,7 @@ function AnswerExtras({ answer }: { answer: Answer }) {
         <div>
           <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-faint">
             <Globe className="size-3" />
-            From the web — check anything that matters
+            {t("chat.web.title")}
           </p>
           <div className="flex flex-wrap items-center gap-1.5">
             {[...new Map(web.map((c) => [c.source_uri, c])).values()].map((c) => (
@@ -268,8 +285,11 @@ function AnswerExtras({ answer }: { answer: Answer }) {
       {answer.queries_shown.length > 0 && (
         <details className="group">
           <summary className="cursor-pointer list-none text-[12px] font-semibold text-mut transition-colors hover:text-accent">
-            ▸ Provenance — {answer.queries_shown.length} executed{" "}
-            {answer.queries_shown.length === 1 ? "query" : "queries"}
+            ▸{" "}
+            {t("chat.provenance", {
+              n: answer.queries_shown.length,
+              noun: t(`chat.query.${plural(locale, answer.queries_shown.length)}`),
+            })}
           </summary>
           <div className="mt-1.5 flex flex-col gap-1.5">
             {answer.queries_shown.map((q, i) => (
@@ -310,7 +330,7 @@ function AnswerExtras({ answer }: { answer: Answer }) {
               {a.filename}
               <span className="block text-[11px] font-normal text-mut">
                 {(a.size_bytes / 1024).toFixed(1)} KB ·{" "}
-                {ready ? "ready to open" : "regenerate to download"}
+                {ready ? t("chat.artifact.ready") : t("chat.artifact.regen")}
               </span>
             </span>
           </motion.button>
@@ -326,12 +346,12 @@ function fmtSecs(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function greeting() {
+function greetingKey() {
   const h = new Date().getHours();
-  if (h < 5) return "Working late";
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
+  if (h < 5) return "chat.greeting.late";
+  if (h < 12) return "chat.greeting.morning";
+  if (h < 18) return "chat.greeting.afternoon";
+  return "chat.greeting.evening";
 }
 
 function Composer({
@@ -367,6 +387,7 @@ function Composer({
   onToggleRec: () => void;
   notice: string | null;
 }) {
+  const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -410,7 +431,7 @@ function Composer({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
-          aria-label="Message"
+          aria-label={t("chat.message")}
           className="max-h-48 w-full resize-none bg-transparent px-2 pt-1 text-[15px] leading-relaxed outline-none placeholder:text-faint"
         />
         <div className="flex items-center justify-between pt-1.5">
@@ -428,7 +449,7 @@ function Composer({
             />
             <button
               type="button"
-              title="Attach images or files"
+              title={t("chat.attach")}
               onClick={() => fileRef.current?.click()}
               className="grid size-9 cursor-pointer place-items-center rounded-full text-mut transition-colors hover:bg-surface-2 hover:text-ink"
             >
@@ -437,7 +458,7 @@ function Composer({
             {recording ? (
               <button
                 type="button"
-                title="Stop recording"
+                title={t("chat.recordStop")}
                 onClick={onToggleRec}
                 className="flex h-9 cursor-pointer items-center gap-2 rounded-full bg-accent-soft px-3 text-[13px] font-semibold text-accent"
               >
@@ -451,7 +472,7 @@ function Composer({
             ) : (
               <button
                 type="button"
-                title="Record a voice note"
+                title={t("chat.record")}
                 onClick={onToggleRec}
                 className="grid size-9 cursor-pointer place-items-center rounded-full text-mut transition-colors hover:bg-surface-2 hover:text-ink"
               >
@@ -466,8 +487,8 @@ function Composer({
             type="submit"
             whileTap={{ scale: 0.88 }}
             disabled={!busy && !canSend}
-            aria-label={busy ? "Stop generating" : "Send"}
-            title={busy ? "Stop" : "Send"}
+            aria-label={busy ? t("chat.stopGenerating") : t("chat.send")}
+            title={busy ? t("chat.stop") : t("chat.send")}
             className={`grid size-9 shrink-0 cursor-pointer place-items-center rounded-full transition-[opacity,background] disabled:opacity-35 ${
               busy
                 ? "bg-ink text-bg"
@@ -513,6 +534,7 @@ function Composer({
    one offer to be shown around rather than a static tour. Dismissal is
    remembered per user so it appears once, not every time the thread empties. */
 function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
+  const t = useT();
   const { token, me } = useAuth();
   const [dismissed, setDismissed] = useState(true);
   const [prompt, setPrompt] = useState("");
@@ -538,7 +560,7 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
 
   if (dismissed || !prompt) return null;
 
-  const roleLabel = (me?.roles ?? []).join(", ") || "your role";
+  const roleNames = (me?.roles ?? []).map(roleLabel).join(", ");
 
   return (
     <AnimatePresence>
@@ -554,12 +576,12 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-[13.5px] font-semibold text-accent-strong">
-              New here? I can show you around.
+              {t("chat.tip.title")}
             </p>
             <p className="mt-0.5 text-[12.5px] leading-relaxed text-mut">
-              I&apos;ll explain what KARAG does and what you can do as{" "}
-              <span className="font-medium">{roleLabel}</span> — tailored to your
-              access, not a generic manual.
+              {roleNames
+                ? t("chat.tip.body", { role: roleNames })
+                : t("chat.tip.bodyNoRole")}
             </p>
             <div className="mt-2.5 flex flex-wrap gap-2">
               <Button
@@ -569,16 +591,16 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
                   onAsk(prompt);
                 }}
               >
-                Show me around
+                {t("chat.tip.go")}
               </Button>
               <Button size="sm" variant="ghost" onClick={close}>
-                Not now
+                {t("chat.tip.later")}
               </Button>
             </div>
           </div>
           <button
             onClick={close}
-            aria-label="Dismiss"
+            aria-label={t("chat.tip.dismiss")}
             className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-faint transition-colors hover:bg-surface hover:text-ink"
           >
             <X className="size-3.5" />
@@ -589,24 +611,66 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
   );
 }
 
-/* ---------- one answer, as it writes itself ---------- */
+/* ---------- one answer, as it arrives ---------- */
+
+function StatusLine({ status }: { status: TurnStatus }) {
+  const t = useT();
+  const text = status.tool
+    ? t("chat.status.tool", { skill: humanise(status.tool) })
+    : status.stage === "retrieving"
+      ? t("chat.status.retrieving")
+      : t("chat.status.thinking");
+  return (
+    <motion.div
+      key={text}
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex items-center gap-3 text-[13px] text-mut"
+    >
+      <BrandLogo mark className="size-6" />
+      <span className="flex items-center gap-2">
+        {status.tool ? <Wrench className="size-3.5 text-accent" /> : <TypingDots />}
+        {text}
+      </span>
+    </motion.div>
+  );
+}
 
 function AssistantTurn({ turn }: { turn: Turn }) {
-  const writing = turn.shown !== undefined;
-  const body = writing ? turn.text.slice(0, turn.shown) : turn.text;
+  const t = useT();
+  const streaming = Boolean(turn.streaming);
+  // nothing written yet: say what is happening instead of showing dots alone
+  if (streaming && !turn.text) {
+    return <StatusLine status={turn.status ?? { stage: "thinking" }} />;
+  }
+  const body = streaming ? balanceFences(turn.text) : turn.text;
   return (
     <div className="group">
-      <Markdown text={writing ? balanceFences(body) : body} />
-      {writing && (
+      {turn.assistantMissing && (
+        <div className="mb-2">
+          <Notice tone="warn">{t("chat.assistantMissing")}</Notice>
+        </div>
+      )}
+      {turn.text ? (
+        <Markdown text={body} />
+      ) : (
+        turn.stopped && (
+          <p className="text-[13.5px] italic text-faint">{t("chat.stoppedEarly")}</p>
+        )
+      )}
+      {streaming && (
         <span
           aria-hidden
           className="caret -mt-4 ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] rounded-full bg-accent align-middle"
         />
       )}
+      {turn.stopped && turn.text && (
+        <p className="mt-1 text-[12px] text-faint">{t("chat.stopped")}</p>
+      )}
       {/* Citations and downloads land once the words have finished, so the
           answer doesn't jump around while it is being read. */}
-      {!writing && turn.answer && <AnswerExtras answer={turn.answer} />}
-      {!writing && (
+      {!streaming && turn.answer && <AnswerExtras answer={turn.answer} />}
+      {!streaming && turn.text && (
         <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           <CopyButton text={turn.text} />
         </div>
@@ -622,7 +686,7 @@ export function ChatThread({
   assistantId,
   assistants,
   onAssistantChange,
-  placeholder = "Ask, attach a file, or record a voice note…",
+  placeholder,
   compact = false,
 }: {
   engine: ChatEngine;
@@ -633,6 +697,7 @@ export function ChatThread({
   placeholder?: string;
   compact?: boolean;
 }) {
+  const t = useT();
   const { turns, busy, send, stop } = engine;
   const [input, setInput] = useState("");
   const [atts, setAtts] = useState<Att[]>([]);
@@ -679,7 +744,7 @@ export function ChatThread({
     if (!files) return;
     for (const f of Array.from(files)) {
       if (f.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
-        flash(`${f.name} is over ${MAX_ATTACHMENT_MB} MB`);
+        flash(t("chat.tooBig", { name: f.name, mb: MAX_ATTACHMENT_MB }));
         continue;
       }
       const isImage = /^image\/(png|jpeg|webp|gif)$/.test(f.type);
@@ -697,7 +762,7 @@ export function ChatThread({
           },
         ]);
       } catch {
-        flash(`Could not read ${f.name}`);
+        flash(t("chat.cantRead", { name: f.name }));
       }
     }
   }
@@ -742,11 +807,11 @@ export function ChatThread({
               filename: `voice-note.${ext}`,
               media_type: blob.type,
               data_b64,
-              label: `Voice note · ${fmtSecs(secs)}`,
+              label: fmtSecs(secs),
             },
           ]);
         } catch {
-          flash("Could not read the recording");
+          flash(t("chat.cantReadRecording"));
         }
       };
       rec.start();
@@ -759,23 +824,29 @@ export function ChatThread({
         setRecSecs(recSecsRef.current);
       }, 1000);
     } catch {
-      flash("Microphone access was denied");
+      flash(t("chat.micDenied"));
     }
   }
 
+  /* The persona is fixed once the conversation has started: the server keeps
+     one assistant per chat, so the picker locks after the first message. */
+  const locked = turns.length > 0;
   const picker =
     assistants && onAssistantChange ? (
-      <Picker
-        compact
-        dropUp
-        value={assistantId ?? ""}
-        onChange={onAssistantChange}
-        ariaLabel="Assistant"
-        options={[
-          { value: "", label: "Default assistant" },
-          ...assistants.map((a) => ({ value: a.id, label: a.name })),
-        ]}
-      />
+      <span title={locked ? t("chat.assistantLocked") : undefined}>
+        <Picker
+          compact
+          dropUp
+          disabled={locked}
+          value={assistantId ?? ""}
+          onChange={onAssistantChange}
+          ariaLabel={t("chat.assistant")}
+          options={[
+            { value: "", label: t("chat.defaultAssistant") },
+            ...assistants.map((a) => ({ value: a.id, label: a.name })),
+          ]}
+        />
+      </span>
     ) : undefined;
 
   const composerProps = {
@@ -784,7 +855,7 @@ export function ChatThread({
     onSend: () => submit(),
     onStop: stop,
     busy,
-    placeholder,
+    placeholder: placeholder ?? t("chat.placeholder"),
     picker,
     atts,
     onAddFiles: (f: FileList | null) => void addFiles(f),
@@ -796,8 +867,6 @@ export function ChatThread({
   };
 
   const empty = turns.length === 0 && !busy;
-  /* the model is working, but nothing has come back to show yet */
-  const thinking = busy && turns.at(-1)?.role !== "karag";
 
   /* -- empty: centered hero with the composer in the middle (Claude-style) -- */
   if (empty && !compact) {
@@ -819,11 +888,9 @@ export function ChatThread({
             </motion.div>
             <div>
               <h1 className="font-display text-[32px] font-bold tracking-tight">
-                {greeting()}
+                {t(greetingKey())}
               </h1>
-              <p className="mt-1.5 text-[15px] text-mut">
-                How can I help you today?
-              </p>
+              <p className="mt-1.5 text-[15px] text-mut">{t("chat.howHelp")}</p>
             </div>
           </div>
 
@@ -832,18 +899,18 @@ export function ChatThread({
           <Composer {...composerProps} autoFocus />
 
           <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-            {SUGGESTIONS.map(({ icon: Icon, label, query }, i) => (
+            {SUGGESTIONS.map(({ icon: Icon, key }, i) => (
               <motion.button
-                key={label}
+                key={key}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 + i * 0.06, duration: 0.4 }}
                 whileHover={{ y: -1 }}
                 whileTap={{ scale: 0.96 }}
-                onClick={() => submit(query)}
+                onClick={() => submit(t(`chat.sug.${key}.query`))}
                 className="flex cursor-pointer items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-2 text-[13px] font-medium text-mut transition-colors hover:border-accent/50 hover:text-ink"
               >
-                <Icon className="size-3.5 text-accent" /> {label}
+                <Icon className="size-3.5 text-accent" /> {t(`chat.sug.${key}.label`)}
               </motion.button>
             ))}
           </div>
@@ -862,9 +929,7 @@ export function ChatThread({
           }`}
         >
           {compact && turns.length === 0 && (
-            <p className="py-6 text-center text-[13px] text-faint">
-              Try your assistant — ask it anything.
-            </p>
+            <p className="py-6 text-center text-[13px] text-faint">{t("chat.tryAssistant")}</p>
           )}
           <AnimatePresence initial={false}>
             {turns.map((t, i) => (
@@ -894,16 +959,6 @@ export function ChatThread({
               </motion.div>
             ))}
           </AnimatePresence>
-          {thinking && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-center gap-3"
-            >
-              <BrandLogo mark className="size-6" />
-              <TypingDots />
-            </motion.div>
-          )}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -911,9 +966,7 @@ export function ChatThread({
       <div className={`mx-auto w-full pt-2 ${compact ? "" : "max-w-3xl"}`}>
         <Composer {...composerProps} />
         {!compact && (
-          <p className="pb-1 pt-2 text-center text-[11.5px] text-faint">
-            Answers cite sources; live figures come from verified skills.
-          </p>
+          <p className="pb-1 pt-2 text-center text-[11.5px] text-faint">{t("chat.footer")}</p>
         )}
       </div>
     </div>
@@ -929,12 +982,13 @@ export function PreviewThread({
   assistantId: string;
   placeholder?: string;
 }) {
-  const { token, language } = useAuth();
-  const send = useCallback(
-    (query: string, attachments: ChatAttachment[], signal: AbortSignal) =>
-      api.ask(token, query, assistantId, attachments, language, signal),
-    [token, assistantId, language],
+  const { token } = useAuth();
+  const run = useCallback<Runner>(
+    async (query, attachments, signal) => ({
+      answer: await api.ask(token, query, assistantId, attachments, undefined, signal),
+    }),
+    [token, assistantId],
   );
-  const engine = useChatEngine(send);
+  const engine = useChatEngine(run);
   return <ChatThread engine={engine} compact placeholder={placeholder} />;
 }

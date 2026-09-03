@@ -11,7 +11,8 @@
  * decision legible. */
 
 import { motion } from "motion/react";
-import { AUDIENCES, audience } from "@/lib/words";
+import { useT } from "@/i18n";
+import { audience, audiences } from "@/lib/words";
 import { EASE } from "@/components/pro";
 
 export function AudiencePicker({
@@ -24,6 +25,8 @@ export function AudiencePicker({
   onChange: (v: string) => void;
   suggested?: string | null;
 }) {
+  const t = useT();
+  const AUDIENCES = audiences();
   const current = audience(value);
   return (
     <div>
@@ -63,7 +66,7 @@ export function AudiencePicker({
                 <span className="text-[13.5px] font-semibold">{a.label}</span>
                 {isSuggested && !active && (
                   <span className="ml-auto rounded-md bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-semibold text-mut">
-                    suggested
+                    {t("audience.suggested")}
                   </span>
                 )}
               </span>
