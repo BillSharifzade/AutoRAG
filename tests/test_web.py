@@ -147,6 +147,50 @@ def test_the_allow_list_shuts_out_everything_else(monkeypatch):
         check_url("https://elsewhere.com/a", policy)
 
 
+def _resolves_privately(monkeypatch):
+    """Every name answers with an internal address, as an intranet name does."""
+    import ipaddress
+
+    import karag.web.guard as guard
+
+    monkeypatch.setattr(
+        guard, "_resolved_addresses",
+        lambda host: [ipaddress.ip_address("172.18.0.7")],
+    )
+
+
+def test_a_named_internal_host_may_be_cleared_by_the_operator(monkeypatch):
+    """An intranet API is reachable only once its name is in the allow-list."""
+    _resolves_privately(monkeypatch)
+    policy = WebPolicy(allow_private_hosts=("karag-test-api", "intranet.corp"))
+
+    assert check_url("http://karag-test-api:8100/v1/products", policy)
+    assert check_url("http://api.intranet.corp/orders", policy)  # subdomains count
+
+    with pytest.raises(WebAccessDenied, match="private network"):
+        check_url("http://karag-test-api:8100/v1/products", WebPolicy())
+
+
+def test_clearing_one_internal_host_does_not_clear_the_rest(monkeypatch):
+    """The exemption is per host — nothing else on the network comes with it."""
+    _resolves_privately(monkeypatch)
+    policy = WebPolicy(allow_private_hosts=("karag-test-api",))
+
+    with pytest.raises(WebAccessDenied, match="private network"):
+        check_url("http://169.254.169.254/latest/meta-data/", policy)
+    with pytest.raises(WebAccessDenied, match="private network"):
+        check_url("http://other-service:8100/", policy)
+    # a lookalike must not inherit the clearance
+    with pytest.raises(WebAccessDenied, match="private network"):
+        check_url("http://karag-test-api.evil.com/", policy)
+
+
+def test_a_cleared_host_still_has_to_be_http():
+    policy = WebPolicy(allow_private_hosts=("karag-test-api",))
+    with pytest.raises(WebAccessDenied):
+        check_url("file:///etc/passwd", policy)
+
+
 def test_the_deny_list_wins_over_the_allow_list(monkeypatch):
     import ipaddress
 

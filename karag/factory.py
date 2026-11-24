@@ -224,6 +224,7 @@ def build_web_policy(s: Settings) -> "WebPolicy":
     return WebPolicy(
         allow_hosts=hosts(s.web_allow_hosts),
         deny_hosts=hosts(s.web_deny_hosts),
+        allow_private_hosts=hosts(s.web_allow_private_hosts),
     )
 
 

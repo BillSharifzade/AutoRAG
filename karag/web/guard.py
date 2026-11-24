@@ -22,6 +22,12 @@ What is refused, and why:
 * **Anything the operator did not allow.** With ``KARAG_WEB_ALLOW_HOSTS`` set,
   only those hosts (and their subdomains) are reachable at all.
 
+The one deliberate exception is a deployment whose data really does live on an
+internal host: ``KARAG_WEB_ALLOW_PRIVATE_HOSTS`` names those hosts one by one,
+and only they skip the private-address rule. Naming a host is a decision the
+operator makes about their own network — it is not something a URL, or the text
+that suggested it, can talk the platform into.
+
 None of this makes fetched content trustworthy — it only bounds where the
 platform can be pointed. The content itself is marked untrusted by the skills
 that use it.
@@ -64,6 +70,10 @@ class WebPolicy:
     # pointing at an internal address, and only an operator running an
     # air-gapped resolver has a reason to skip it.
     allow_private_addresses: bool = False
+    # Internal hosts the operator cleared by name — an intranet API that is the
+    # point of the deployment, or a test double on the dev network. Only these
+    # skip the address check; everything else still has to be public.
+    allow_private_hosts: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "WebPolicy":
@@ -78,6 +88,7 @@ class WebPolicy:
         return cls(
             allow_hosts=hosts("KARAG_WEB_ALLOW_HOSTS"),
             deny_hosts=hosts("KARAG_WEB_DENY_HOSTS"),
+            allow_private_hosts=hosts("KARAG_WEB_ALLOW_PRIVATE_HOSTS"),
             max_bytes=int(e.get("KARAG_WEB_MAX_BYTES", str(MAX_PAGE_BYTES))),
             timeout_s=float(e.get("KARAG_WEB_TIMEOUT", "12")),
         )
@@ -152,7 +163,8 @@ def check_url(url: str, policy: WebPolicy) -> str:
             f"{host} is not on this deployment's allowed list of sites"
         )
 
-    if not policy.allow_private_addresses:
+    cleared = any(_host_matches(host, h) for h in policy.allow_private_hosts)
+    if not policy.allow_private_addresses and not cleared:
         for addr in _resolved_addresses(host):
             if not _is_public(addr):
                 # Deliberately vague about *which* address: the refusal should

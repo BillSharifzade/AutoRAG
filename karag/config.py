@@ -89,6 +89,9 @@ class Settings:
     # comma-separated; empty allow-list means "anywhere public"
     web_allow_hosts: str = ""
     web_deny_hosts: str = ""
+    # internal hosts cleared by name (an intranet API, a test double); only
+    # these are exempt from the "must resolve to a public address" rule
+    web_allow_private_hosts: str = ""
     # roles that may search the web; empty means everyone who can chat
     web_roles: str = ""
 
@@ -150,6 +153,7 @@ class Settings:
             serper_api_key=os.environ.get("SERPER_API_KEY"),
             web_allow_hosts=_get("KARAG_WEB_ALLOW_HOSTS", ""),
             web_deny_hosts=_get("KARAG_WEB_DENY_HOSTS", ""),
+            web_allow_private_hosts=_get("KARAG_WEB_ALLOW_PRIVATE_HOSTS", ""),
             web_roles=_get("KARAG_WEB_ROLES", ""),
             pg_dsn=_get("KARAG_PG_DSN", "postgresql://localhost/karag"),
             top_k=int(_get("KARAG_TOP_K", "5")),

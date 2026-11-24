@@ -26,7 +26,11 @@ export const data: Dictionary = {
     "data.records.one": "{n} record",
     "data.records.few": "{n} records",
     "data.records.many": "{n} records",
+    "data.restricted.what": "Only administrators connect data",
+    "data.restricted.who":
+      "Connecting an API or a database changes what the assistant may read for everyone at your company, so setting one up is limited to administrators and data authors. You can still use everything already connected — just ask in chat.",
     "data.sync.on": "Copy in knowledge, refreshed every {h} h",
+    "data.sync.on.min": "Copy in knowledge, refreshed every {m} min",
     "data.sync.off": "Fetched live only",
     "data.skill.on": "Available to the assistant",
     "data.skill.off": "Not offered to the assistant",
@@ -144,7 +148,11 @@ export const data: Dictionary = {
     "data.records.one": "{n} запись",
     "data.records.few": "{n} записи",
     "data.records.many": "{n} записей",
+    "data.restricted.what": "Данные подключают только администраторы",
+    "data.restricted.who":
+      "Подключение API или базы меняет то, что помощник читает для всей компании, поэтому настраивают их администраторы и авторы данных. Пользоваться уже подключённым может каждый — просто спросите в чате.",
     "data.sync.on": "Копия в базе знаний, обновление каждые {h} ч",
+    "data.sync.on.min": "Копия в базе знаний, обновление каждые {m} мин",
     "data.sync.off": "Только по запросу",
     "data.skill.on": "Доступно помощнику",
     "data.skill.off": "Помощнику не предлагается",

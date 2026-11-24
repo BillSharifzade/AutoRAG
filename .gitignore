@@ -25,5 +25,11 @@ demo_sales.db
 *.log
 .DS_Store
 
-# Docker state (SQLite files bind-mounted into the containers)
-data/
+# Docker state (SQLite files bind-mounted into the containers).
+# Anchored: unanchored "data/" also swallowed web/src/app/data and
+# web/src/components/data — the whole Data feature's UI — so none of it was
+# ever committed.
+/data/
+
+# Generated testbench fixtures (rebuild with testbench/build.py)
+testbench/build/
