@@ -64,6 +64,29 @@ def visible_classes(principal: Principal) -> frozenset[DataClass]:
     return frozenset(allowed)
 
 
+def audience(data_class: DataClass) -> frozenset[str]:
+    """Every role cleared to read ``data_class``."""
+    return frozenset(r for r, classes in ROLE_DATA_CLASSES.items() if data_class in classes)
+
+
+def within(inner: DataClass, outer: DataClass) -> bool:
+    """Whether everyone cleared for ``inner`` is also cleared for ``outer`` —
+    i.e. labelling ``outer`` data as ``inner`` would not widen who sees it.
+    HR and financial are siblings, not a ladder: neither is within the other."""
+    return audience(inner) <= audience(outer)
+
+
+def narrowest_cleared(principal: Principal) -> DataClass:
+    """The most restrictive class the principal may assign — where something
+    new starts before anyone has said who it is for."""
+    mine = visible_classes(principal)
+    if DataClass.most_restrictive() in mine:
+        return DataClass.most_restrictive()
+    if not mine:
+        return DataClass.most_restrictive()
+    return min(mine, key=lambda c: (len(audience(c)), c.value))
+
+
 def can_access(principal: Principal, data_class: DataClass) -> bool:
     """Whether the principal may read content of ``data_class``."""
     return data_class in visible_classes(principal)

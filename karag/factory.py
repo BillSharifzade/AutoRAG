@@ -230,6 +230,21 @@ def build_proposal_store(s: Settings) -> ProposalStore:
     raise ConfigError(f"unknown app_store: {s.app_store}")
 
 
+def code_changes_available(s: Settings) -> bool:
+    """Self-modification needs a git checkout to branch in (and git itself).
+
+    A container image ships the code without its history or the git binary;
+    there the capability is switched off — and says so — instead of being
+    offered and failing on first use.
+    """
+    import shutil
+    from pathlib import Path
+
+    if not s.engineer_enabled:
+        return False
+    return bool(shutil.which("git")) and (Path(s.repo_root) / ".git").exists()
+
+
 def build_engineer_generator(s: Settings) -> Generator | None:
     """The stronger model reserved for turns that may write code.
 
@@ -238,7 +253,7 @@ def build_engineer_generator(s: Settings) -> Generator | None:
     when the configured generator isn't Anthropic — the Opus requirement only
     makes sense on the provider that has it.
     """
-    if not s.engineer_enabled or not s.engineer_model:
+    if not code_changes_available(s) or not s.engineer_model:
         return None
     if s.generator != "anthropic" or s.anthropic_model == s.engineer_model:
         return None
@@ -251,6 +266,17 @@ def build_engineer_generator(s: Settings) -> Generator | None:
         effort="high",
         max_tokens=64000,
         refusal_fallback=s.anthropic_refusal_fallback,
+    )
+
+
+def build_sqlite_policy(s: Settings):
+    """Tenant uploads + operator-cleared directories; never our own databases."""
+    from .connectors.registry import SqlitePolicy
+
+    return SqlitePolicy(
+        upload_dir=s.upload_dir,
+        extra_dirs=tuple(d.strip() for d in s.sqlite_allowed_dirs.split(",") if d.strip()),
+        deny_files=(s.app_db_path, s.chat_db_path, s.usage_db_path, s.sqlite_path),
     )
 
 
@@ -401,6 +427,8 @@ class Platform:
     skill_load_errors: list[str] = field(default_factory=list)
     # rate limit + monthly budget (karag.budget)
     guard: object | None = None
+    # whether guarded self-modification can run here (git checkout present)
+    code_changes_available: bool = False
 
 
 def build_platform(
@@ -452,7 +480,8 @@ def build_platform(
     # instead of losing it (§5 — skills are the product, not a code artefact).
     connector_store = build_connector_store(s)
     catalog = SkillCatalog(
-        reg, build_definition_store(s), connector_store, audit=audit_log
+        reg, build_definition_store(s), connector_store, audit=audit_log,
+        sqlite_policy=build_sqlite_policy(s),
     )
     _, load_errors = catalog.load_all()
 
@@ -493,7 +522,8 @@ def build_platform(
     if s.self_knowledge:
         for skill in platform_skills(codebase):
             reg.register(skill)
-    if s.engineer_enabled:
+    can_change_code = code_changes_available(s)
+    if can_change_code:
         for skill in engineer_skills(code_changes):
             reg.register(skill)
 
@@ -524,13 +554,14 @@ def build_platform(
         directory_service=DirectoryService(directory),
         executor=executor,
         alerts=alert_store,
-        alert_service=AlertService(alert_store, audit=audit_log),
+        alert_service=AlertService(alert_store, audit=audit_log, resolve_skill=reg.resolve),
         codebase=codebase,
         code_changes=code_changes,
         sources=sources,
         databases=databases,
         skill_load_errors=load_errors,
         guard=guard,
+        code_changes_available=can_change_code,
     )
 
     # Operational skills need the assembled platform (they call its services

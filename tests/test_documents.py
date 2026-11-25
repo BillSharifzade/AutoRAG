@@ -158,6 +158,24 @@ def test_title_outweighs_a_stray_body_mention():
     assert c.suggested is DataClass.PUBLIC
 
 
+def test_everyday_procedures_and_pay_are_not_escalated():
+    """Found on the deployed server: a cold-chain SOP was proposed as
+    regulated ("SOP", "deviation"), and a payroll sheet as financial."""
+    sop = suggest_data_class(
+        title="СОП: хранение термолабильных препаратов",
+        text="Стандартная операционная процедура. При отклонении температуры "
+             "фармацевт фиксирует процесс в журнале склада.",
+    )
+    assert sop.suggested is DataClass.OPERATIONAL
+    assert suggest_data_class(title="Зарплата сотрудников, оклады").suggested is DataClass.HR
+    leave = suggest_data_class(
+        title="Положение об отпусках",
+        text="Сотрудникам, работающим с наркотическими и психотропными препаратами, "
+             "положен дополнительный отпуск. График отпусков утверждает отдел кадров.",
+    )
+    assert leave.suggested is DataClass.HR
+
+
 def test_payload_flags_itself_as_advisory():
     payload = suggest_data_class(title="Payroll 2026").to_dict()
     assert payload["advisory"] is True

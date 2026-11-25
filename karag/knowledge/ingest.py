@@ -27,8 +27,25 @@ PdfOcr = Callable[[bytes], Awaitable[str]]
 _SCAN_CHARS_PER_PAGE = 40
 
 
+_DOC_EXTENSIONS = (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".txt", ".md", ".doc", ".xls")
+
+
+def title_from_filename(filename: str) -> str:
+    """"Положение_об_отпусках.docx" → "Положение об отпусках": the list shows
+    a document's name, not its file name."""
+    stem = filename
+    if os.path.splitext(stem)[1].lower() in _DOC_EXTENSIONS:
+        stem = os.path.splitext(stem)[0]
+    return " ".join(stem.replace("_", " ").split()) or filename
+
+
+def _title_key(title: str) -> str:
+    # an older upload stored as "x.pdf" is still the same document as "x"
+    return title_from_filename(title).casefold()
+
+
 def _same_title(a: str, b: str) -> bool:
-    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+    return _title_key(a) == _title_key(b)
 
 
 def _section(heading: str, title: str) -> str:
@@ -105,7 +122,7 @@ class IngestionService:
                 meta["ocr"] = True
         if not text.strip():
             raise ValidationError(f"no text could be read from {filename}")
-        title = (metadata or {}).get("title") or filename
+        title = (metadata or {}).get("title") or title_from_filename(filename)
         return await self.ingest_document(
             principal,
             title=title,

@@ -525,6 +525,7 @@ class DataSourceService:
             required_data_class=source.data_class,
             required_roles=frozenset(source.required_roles),
             tenant_id=source.tenant_id,
+            label=source.name,
         )
 
     # ---- helpers ------------------------------------------------------------

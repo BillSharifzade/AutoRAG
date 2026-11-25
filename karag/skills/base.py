@@ -47,6 +47,14 @@ class Skill:
     required_roles: frozenset[str] = field(default_factory=frozenset)
     # tenant that owns this skill; "*" means available to every tenant.
     tenant_id: str = "*"
+    # what kind of tool this is — "data" (reads a company source: SQL, REST,
+    # a connected database or API), "output" (makes a file), "procedure",
+    # "platform" (KARAG explaining itself), "admin", "web", "engineer".
+    # Alerts run data skills only.
+    category: str = "data"
+    # a human name for the console ("Аптеки", "Список пользователей");
+    # empty when the description already serves
+    label: str = ""
 
     def to_tool_spec(self) -> ToolSpec:
         return ToolSpec(

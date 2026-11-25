@@ -71,7 +71,11 @@ function plural(locale: Locale, n: number): "one" | "few" | "many" {
 }
 
 export default function DocumentsPage() {
-  const { token } = useAuth();
+  const { token, me } = useAuth();
+  // Adding and removing needs an ingest role; everyone else reads only. The
+  // API refuses either way — this keeps people from filling in a form that
+  // can only fail.
+  const canIngest = me?.can_ingest ?? false;
   const t = useT();
   const { locale } = useLocale();
 
@@ -134,7 +138,10 @@ export default function DocumentsPage() {
     try {
       const c = await api.documents.classify(token, file);
       setSuggestion(c);
-      setWho(c.suggested); // pre-selected, still the reader's call
+      // Pre-select only a guess with evidence behind it. With none, the
+      // server's fail-closed "regulated" is not a suggestion — the reader
+      // chooses, and the current choice is left alone.
+      if (c.confidence > 0) setWho(c.suggested);
     } catch {
       // A failed guess must never block an upload — the choice below is
       // the authority regardless.
@@ -197,6 +204,7 @@ export default function DocumentsPage() {
       />
 
       {/* ---------- add ---------- */}
+      {canIngest && (
       <StaggerItem>
         <section className="overflow-hidden rounded-3xl border border-line bg-surface [box-shadow:var(--shadow)]">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-6 py-4">
@@ -309,6 +317,8 @@ export default function DocumentsPage() {
                           <div className="mt-4">
                             {reading ? (
                               <Notice tone="info">{t("documents.reading")}</Notice>
+                            ) : suggestion && suggestion.confidence <= 0 ? (
+                              <Notice tone="info">{t("documents.guess.none")}</Notice>
                             ) : suggestion ? (
                               <div className="rounded-xl border border-line bg-surface-2 p-3.5">
                                 <p className="flex items-center gap-2 text-[13px] font-semibold">
@@ -318,7 +328,13 @@ export default function DocumentsPage() {
                                   })}
                                 </p>
                                 <p className="mt-1.5 text-[12px] leading-relaxed text-mut">
-                                  {suggestion.rationale} {t("documents.guess.note")}
+                                  {t("documents.guess.why", {
+                                    words: (suggestion.matched[suggestion.suggested] ?? [])
+                                      .slice(0, 4)
+                                      .map((w) => `«${w}…»`)
+                                      .join(", "),
+                                  })}{" "}
+                                  {t("documents.guess.note")}
                                 </p>
                               </div>
                             ) : null}
@@ -376,6 +392,7 @@ export default function DocumentsPage() {
           </div>
         </section>
       </StaggerItem>
+      )}
 
       {/* ---------- library ---------- */}
       <StaggerItem>
@@ -471,6 +488,7 @@ export default function DocumentsPage() {
                         </p>
                       </div>
                       <AudienceBadge value={d.data_class} />
+                      {canIngest && (
                       <ConfirmAction
                         question={t("documents.remove.q")}
                         onConfirm={async () => {
@@ -491,6 +509,7 @@ export default function DocumentsPage() {
                           </button>
                         )}
                       </ConfirmAction>
+                      )}
                     </motion.li>
                   ))}
                 </AnimatePresence>

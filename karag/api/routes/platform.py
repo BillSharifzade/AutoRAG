@@ -11,6 +11,7 @@ from ...errors import NotFoundError
 from ...selfknowledge.handbook import guides_for, onboarding_prompt
 from ...skills.catalog import can_author
 from ...tenants import LANGUAGES, validate_language
+from ...rbac import INGEST_ROLES
 from ..common import (
     ApiContext,
     LanguageRequest,
@@ -41,9 +42,13 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
             "roles": list(principal.roles),
             "language": language_for(principal, None),
             "can_author_skills": can_author(principal),
+            # may add documents (and remove them): an ingest role is needed
+            "can_ingest": principal.has_any_role(INGEST_ROLES),
             "can_edit_code": (
-                plat.settings.engineer_enabled and ENGINEER_ROLE in principal.roles
+                plat.code_changes_available and ENGINEER_ROLE in principal.roles
             ),
+            # false in a deployment without a git checkout (e.g. a container)
+            "code_changes_available": plat.code_changes_available,
         }
 
     @app.post("/v1/me/language")
@@ -54,12 +59,11 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
         try:
             plat.directory_service.set_language(principal, req.language)
         except NotFoundError:
-            # env-token users have no account row; the choice is then per-request
-            raise HTTPException(
-                status_code=404,
-                detail="no stored account for this token; pass language per request",
-            )
-        return {"language": req.language}
+            # A configuration-token user has no account row to store it in.
+            # Not an error: the console keeps the choice locally and sends it
+            # with each request, so say so instead of answering 404.
+            return {"language": req.language, "stored": False}
+        return {"language": req.language, "stored": True}
 
     @app.get("/")
     async def root() -> dict:
@@ -70,14 +74,17 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
     # --- Platform self-knowledge (onboarding tour) -------------------------
 
     @app.get("/v1/onboarding")
-    async def onboarding(principal: Principal = Depends(principal_from)) -> dict:
-        """What the first-visit tip offers, and the prompt it sends if accepted."""
+    async def onboarding(
+        lang: str = "en", principal: Principal = Depends(principal_from)
+    ) -> dict:
+        """What the first-visit tip offers, and the prompt it sends if accepted
+        (in the interface language ``lang`` — the answer follows it)."""
         return {
             "roles": list(principal.roles),
             "guides": [
                 {"role": role, "guide": text} for role, text in guides_for(principal)
             ],
-            "prompt": onboarding_prompt(principal),
+            "prompt": onboarding_prompt(principal, lang),
         }
 
     # --- Code changes (karag_engineer only) --------------------------------

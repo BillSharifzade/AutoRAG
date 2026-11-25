@@ -63,7 +63,8 @@ export default function AuditPage() {
     if (!token) return;
     try {
       const r = await api.audit(token);
-      setEvents(r.events);
+      // newest first: the journal is read from what just happened backwards
+      setEvents([...r.events].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)));
       setProblem("");
     } catch (e) {
       setProblem(errorWords((e as ApiError).message));

@@ -100,6 +100,13 @@ export function LookupForm({
   const fitting = useMemo(() => connectors.filter((c) => connectorFits(c, kind)), [connectors, kind]);
   const connector = fitting.find((c) => c.id === connectorId);
 
+  /* A new lookup starts with the audience of the connection it reads — the
+     server refuses one that would show the data to more people than that. */
+  function inheritAudience(c: Connector) {
+    const cls = c.metadata?.data_class;
+    if (!existing && cls) setAudience(cls);
+  }
+
   function changeStatement(v: string) {
     setStatement(v);
     setRows((prev) => mergeParams(detectPlaceholders(v, kind), prev));
@@ -191,6 +198,7 @@ export function LookupForm({
                       aria-checked={active}
                       onClick={() => {
                         setConnectorId(c.id);
+                        inheritAudience(c);
                         setStep(1);
                       }}
                       className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 text-left transition-colors ${
@@ -217,6 +225,7 @@ export function LookupForm({
                 onDone={(c) => {
                   onConnectorAdded(c);
                   setConnectorId(c.id);
+                  inheritAudience(c);
                   setAdding(false);
                   setStep(1);
                 }}

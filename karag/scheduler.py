@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -181,16 +182,39 @@ def evaluate_condition(rule: StoredAlertRule, data: object) -> bool:
     return False
 
 
+_UNRESOLVED = re.compile(r"\{[A-Za-z_][\w]*\}")
+
+
+class _Placeholders(dict):
+    """Unknown ``{names}`` stay in the text as written instead of failing."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
 def render_message(rule: StoredAlertRule, data: object) -> str:
+    """The alert text. Placeholders: ``{name}``, ``{count}`` (rows),
+    ``{tenant}``, ``{skill}``, and every column of the first row — so
+    "Ниже порога: {n}" works for ``SELECT COUNT(*) AS n …``. An unknown
+    placeholder is left as written; it never swallows the whole message."""
     rows = _rows(data)
     if rule.message_template:
+        values = _Placeholders(
+            name=rule.name, count=len(rows), tenant=rule.tenant_id, skill=rule.skill_name,
+        )
+        if rows and isinstance(rows[0], dict):
+            for key, value in rows[0].items():
+                values.setdefault(str(key), value)
         try:
-            return rule.message_template.format(
-                name=rule.name, count=len(rows), tenant=rule.tenant_id,
-                skill=rule.skill_name, rows=rows,
-            )
-        except (KeyError, IndexError):
-            pass  # a bad placeholder must not suppress the alert
+            text = rule.message_template.format_map(values)
+        except (ValueError, IndexError, AttributeError):
+            text = ""  # a malformed template must not suppress the alert
+        if text and _UNRESOLVED.search(text):
+            # something in the template did not resolve: keep it, but say
+            # which alert this is so the message still makes sense
+            return f"{rule.name}: {text}"
+        if text:
+            return text
     return f"[{rule.tenant_id}] {rule.name}: {len(rows)} row(s) matched {rule.skill_name}"
 
 
@@ -384,9 +408,18 @@ class AlertService:
     # may read — a rule is still capped at its creator's own roles below.
     MANAGE_ROLES = frozenset({"admin", "ceo", "skill_author", "qa", "finance"})
 
-    def __init__(self, store: AlertRuleStore, *, audit: AuditLog | None = None) -> None:
+    def __init__(
+        self,
+        store: AlertRuleStore,
+        *,
+        audit: AuditLog | None = None,
+        resolve_skill=None,
+    ) -> None:
         self._store = store
         self._audit = audit or NullAuditLog()
+        # (principal, name) -> Skill | None; when set, a rule may only run a
+        # data skill the creator can use, with its required arguments given
+        self._resolve_skill = resolve_skill
 
     def create(
         self,
@@ -412,6 +445,18 @@ class AlertService:
             raise AccessDenied(
                 "an alert cannot run with roles you do not hold: " + ", ".join(sorted(extra))
             )
+        if self._resolve_skill is not None:
+            skill = self._resolve_skill(principal, skill_name)
+            if skill is None:
+                raise ValidationError(f"unknown skill {skill_name!r}, or not one you may use")
+            if getattr(skill, "category", "data") != "data":
+                raise ValidationError(
+                    "an alert can only run a data lookup (a database, an API, an authored "
+                    f"query) — {skill_name!r} is a {skill.category} tool"
+                )
+            from .skills.executor import validate_arguments  # noqa: PLC0415
+
+            validate_arguments(skill.input_schema, arguments or {})
         rule = StoredAlertRule(
             id=new_id("alert"),
             tenant_id=principal.tenant_id,

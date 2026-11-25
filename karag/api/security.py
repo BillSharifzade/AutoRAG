@@ -37,6 +37,10 @@ class InMemoryResolver:
             raise AccessDenied("invalid token")
         return principal
 
+    def config_principals(self) -> list[Principal]:
+        """The people these static tokens stand for — never the tokens."""
+        return list(self._tokens.values())
+
     @classmethod
     def from_env(cls, var: str = "KARAG_TOKENS") -> "InMemoryResolver":
         raw = os.environ.get(var, "")

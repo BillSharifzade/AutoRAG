@@ -41,6 +41,7 @@ import {
   type AccessMode,
 } from "@/components/assistants/helpers";
 import { TEMPLATES } from "@/components/assistants/templates";
+import { Markdown } from "@/components/chat-thread";
 import {
   ConfirmAction,
   EASE,
@@ -406,7 +407,11 @@ function TryBox({ a }: { a: Assistant }) {
       )}
       {answer && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-4">
-          <div className="whitespace-pre-wrap text-[14px] leading-relaxed">{answer.text || t("assistants.try.empty")}</div>
+          {answer.text ? (
+            <Markdown text={answer.text} />
+          ) : (
+            <p className="text-[14px] leading-relaxed">{t("assistants.try.empty")}</p>
+          )}
           <p className="mt-2 flex flex-wrap gap-3 text-[12px] text-faint">
             {answer.skills_used.length > 0 && (
               <span>{t("assistants.try.used", { skills: answer.skills_used.map(humanise).join(", ") })}</span>

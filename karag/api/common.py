@@ -98,7 +98,9 @@ async def _resolve_attachments(req: AskRequest) -> tuple[str, list[ImagePart]]:
 
     for att in req.attachments:
         try:
-            raw = base64.b64decode(att.data_b64)
+            # validate=True: stray characters are an error, not silently
+            # dropped into a corrupted file
+            raw = base64.b64decode("".join(att.data_b64.split()), validate=True)
         except Exception:
             raise HTTPException(status_code=400, detail=f"bad base64 in {att.filename!r}")
         if len(raw) > _MAX_ATTACHMENT_BYTES:
@@ -191,7 +193,9 @@ class SkillDefinitionRequest(BaseModel):
     path: str = ""
     instructions: str = ""
     resources: list[SkillResourceRequest] = []
-    required_data_class: DataClass = DataClass.OPERATIONAL
+    # None: on create, inherit the audience of the data the lookup reads; on
+    # update, leave as is
+    required_data_class: DataClass | None = None
     required_roles: list[str] = []
     row_limit: int | None = None
     inject_tenant: bool = True
@@ -399,3 +403,5 @@ class ApiContext:
     prices: PriceList
     scheduler: AlertScheduler
     bot_svc: BotService
+    # the people behind static config tokens (no tokens), for the admin list
+    config_principals: Callable[[], list[Principal]] = lambda: []

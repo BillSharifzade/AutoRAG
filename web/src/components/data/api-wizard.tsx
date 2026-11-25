@@ -34,7 +34,7 @@ export function ApiWizard({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [audience, setAudience] = useState("operational");
+  const [audience, setAudience] = useState(""); // an explicit choice, never a default
   const [roleValues, setRoleValues] = useState<string[]>([]);
   const [useSkill, setUseSkill] = useState(true);
   const [useSync, setUseSync] = useState(false);
@@ -95,7 +95,7 @@ export function ApiWizard({
       : profile.kind === "object"
         ? t("data.api.got.object", { f: profile.fields.length })
         : t("data.api.got.text", { n: profile.text_preview.length });
-  const ready = name.trim() && description.trim() && (useSkill || useSync);
+  const ready = name.trim() && description.trim() && audience && (useSkill || useSync);
 
   return (
     <div className="flex flex-col gap-6">
@@ -172,10 +172,13 @@ export function ApiWizard({
                             {f.samples.length ? String(f.samples[0]) : "—"}
                           </td>
                           <td className="px-3 py-1.5">
-                            <input
+                            {/* a meaning is a sentence — wrap it instead of
+                                clipping it in a one-line box */}
+                            <textarea
                               value={notes[f.name] ?? ""}
                               onChange={(e) => setNotes((n) => ({ ...n, [f.name]: e.target.value }))}
-                              className="h-8 w-full min-w-40 rounded-lg border border-transparent bg-transparent px-2 transition-colors hover:border-line focus:border-accent focus:bg-surface"
+                              rows={Math.min(4, Math.max(1, Math.ceil((notes[f.name] ?? "").length / 42)))}
+                              className="w-full min-w-56 resize-y rounded-lg border border-transparent bg-transparent px-2 py-1 leading-snug transition-colors hover:border-line focus:border-accent focus:bg-surface"
                             />
                           </td>
                         </tr>

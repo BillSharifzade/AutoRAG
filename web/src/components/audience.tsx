@@ -28,6 +28,9 @@ export function AudiencePicker({
   const t = useT();
   const AUDIENCES = audiences();
   const current = audience(value);
+  // nothing chosen yet: the meter stays empty instead of implying a default
+  const chosen = AUDIENCES.some((a) => a.value === value);
+  const level = chosen ? current.level : -1;
   return (
     <div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -86,18 +89,22 @@ export function AudiencePicker({
               key={a.value}
               animate={{
                 backgroundColor:
-                  a.level <= current.level ? current.dot : "var(--line)",
-                scaleY: a.level <= current.level ? 1 : 0.55,
+                  a.level <= level ? current.dot : "var(--line)",
+                scaleY: a.level <= level ? 1 : 0.55,
               }}
               transition={{ duration: 0.3, ease: EASE }}
               className="h-2 w-7 origin-center rounded-full"
             />
           ))}
         </span>
-        <p className="text-[12.5px] text-mut">
-          <strong className="font-semibold text-ink">{current.label}</strong> —{" "}
-          {current.who}
-        </p>
+        {chosen ? (
+          <p className="text-[12.5px] text-mut">
+            <strong className="font-semibold text-ink">{current.label}</strong> —{" "}
+            {current.who}
+          </p>
+        ) : (
+          <p className="text-[12.5px] font-semibold text-warn">{t("audience.choose")}</p>
+        )}
       </div>
     </div>
   );

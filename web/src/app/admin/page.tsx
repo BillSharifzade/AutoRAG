@@ -37,6 +37,8 @@ import {
   type SkillInfo,
   type Tenant,
 } from "@/lib/api";
+import { humanise } from "@/components/assistants/helpers";
+import { humanTitle } from "@/lib/skills";
 import { useAuth } from "@/lib/auth";
 import { useLoad } from "@/lib/use-load";
 import { errorWords, roleLabel, roles, whenWords } from "@/lib/words";
@@ -106,7 +108,9 @@ export default function AdminPage() {
       ]);
       setPeople(a.accounts);
       setAlerts(al.alerts);
-      setLookups(sk.skills);
+      // alerts run lookups on company data — not file makers, admin or
+      // platform tools
+      setLookups(sk.skills.filter((x) => (x.category ?? "data") === "data"));
       if (isOperator) {
         const t = await api.tenants.list(token).catch(() => ({ tenants: [] }));
         setCompanies(t.tenants);
@@ -481,12 +485,23 @@ function People({
                         {t("admin.people.suspended")}
                       </span>
                     )}
+                    {p.source === "config" && (
+                      <span
+                        title={t("admin.people.configHint")}
+                        className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-semibold text-mut"
+                      >
+                        {t("admin.people.config")}
+                      </span>
+                    )}
                   </p>
                   <p className="truncate text-[12px] text-mut">
                     {p.roles.map(roleLabel).join(" · ")}
                   </p>
                 </div>
 
+                {/* A config-token person is managed in the server's
+                    configuration; nothing here could change their access. */}
+                {p.source !== "config" && (<>
                 <button
                   onClick={async () => {
                     try {
@@ -534,6 +549,7 @@ function People({
                     </button>
                   )}
                 </ConfirmAction>
+                </>)}
               </motion.li>
             ))}
           </ul>
@@ -563,8 +579,48 @@ function Alerts({
   const [lookup, setLookup] = useState("");
   const [every, setEvery] = useState("3600");
   const [message, setMessage] = useState("");
+  const [args, setArgs] = useState<Record<string, string>>({});
+  const [condition, setCondition] = useState<AlertRule["condition"]>("rows_returned");
+  const [field, setField] = useState("");
+  const [op, setOp] = useState("<");
+  const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const howOften = HOW_OFTEN.map((h) => ({ value: h.value, label: t(h.key) }));
+  const chosen = lookups.find((s) => s.name === lookup);
+  // `purpose` is the lookup's note for the activity log — filled from the
+  // alert's name rather than asked for
+  const params = Object.entries(chosen?.input_schema?.properties ?? {}).filter(
+    ([k]) => k !== "purpose",
+  );
+  const wantsPurpose = Boolean(chosen?.input_schema?.properties?.purpose);
+  const required = new Set(chosen?.input_schema?.required ?? []);
+  const argsOk = params.every(([k]) => !required.has(k) || (args[k] ?? "").trim());
+  const conditionOk = condition !== "field_compare" || (field.trim() && target.trim());
+
+  function reset() {
+    setAdding(false);
+    setName("");
+    setLookup("");
+    setMessage("");
+    setArgs({});
+    setCondition("rows_returned");
+    setField("");
+    setTarget("");
+  }
+
+  /** typed as the lookup's schema declares, so "10" reaches it as 10 */
+  function typedArgs(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, spec] of params) {
+      const raw = (args[k] ?? "").trim();
+      if (!raw) continue;
+      if (spec.type === "integer" || spec.type === "number") out[k] = Number(raw);
+      else if (spec.type === "boolean") out[k] = raw === "true";
+      else out[k] = raw;
+    }
+    if (wantsPurpose) out.purpose = `alert: ${name.trim()}`;
+    return out;
+  }
 
   return (
     <section className="overflow-hidden rounded-3xl border border-line bg-surface [box-shadow:var(--shadow)]">
@@ -613,9 +669,75 @@ function Alerts({
                   ariaLabel={t("admin.alerts.lookupAria")}
                   options={lookups.map((s) => ({
                     value: s.name,
-                    label: s.description || s.name,
+                    label: s.label || humanTitle(s.name),
                   }))}
                 />
+                {/* an authored lookup's description is the author's own words;
+                    a connection's is written for the model — not shown */}
+                {chosen?.description && !chosen.label && (
+                  <p className="mt-1.5 line-clamp-2 text-[12px] text-mut">{chosen.description}</p>
+                )}
+              </div>
+              {params.length > 0 && (
+                <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
+                  {params.map(([key, spec]) => (
+                    <div key={key} className={key === "sql" ? "md:col-span-2" : undefined}>
+                      <label className="mb-1.5 block text-[13px] font-semibold">
+                        {key === "sql" ? t("admin.alerts.sql") : humanise(key)}
+                        {required.has(key) ? " *" : ""}
+                      </label>
+                      <Input
+                        value={args[key] ?? ""}
+                        onChange={(e) => setArgs((a) => ({ ...a, [key]: e.target.value }))}
+                        placeholder={key === "sql" ? "SELECT COUNT(*) AS n FROM …" : spec.description ?? ""}
+                        inputMode={spec.type === "integer" || spec.type === "number" ? "decimal" : undefined}
+                        className={key === "sql" ? "font-mono text-[12.5px]" : undefined}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="md:col-span-2">
+                <label className="mb-1.5 block text-[13px] font-semibold">
+                  {t("admin.alerts.when")}
+                </label>
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,1fr))]">
+                  <Picker
+                    value={condition}
+                    onChange={(v) => setCondition(v as AlertRule["condition"])}
+                    ariaLabel={t("admin.alerts.when")}
+                    options={[
+                      { value: "rows_returned", label: t("admin.alerts.when.rows") },
+                      { value: "field_compare", label: t("admin.alerts.when.field") },
+                      { value: "always", label: t("admin.alerts.when.always") },
+                    ]}
+                  />
+                  {condition === "field_compare" && (
+                    <>
+                      <Input
+                        value={field}
+                        onChange={(e) => setField(e.target.value)}
+                        placeholder={t("admin.alerts.fieldPh")}
+                        aria-label={t("admin.alerts.fieldPh")}
+                      />
+                      <Picker
+                        value={op}
+                        onChange={setOp}
+                        ariaLabel={t("admin.alerts.op")}
+                        options={["<", "<=", ">", ">=", "==", "!="].map((o) => ({
+                          value: o,
+                          label: t(`admin.alerts.op.${o}`),
+                        }))}
+                      />
+                      <Input
+                        value={target}
+                        onChange={(e) => setTarget(e.target.value)}
+                        placeholder={t("admin.alerts.valuePh")}
+                        aria-label={t("admin.alerts.valuePh")}
+                      />
+                    </>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="mb-1.5 block text-[13px] font-semibold">
@@ -637,26 +759,34 @@ function Alerts({
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder={t("admin.alerts.messagePh")}
                 />
+                <p className="mt-1.5 text-[12px] text-faint">{t("admin.alerts.messageHint")}</p>
               </div>
               <div className="flex items-center gap-3 md:col-span-2">
                 <Button
                   variant="cta"
                   busy={busy}
-                  disabled={!name.trim() || !lookup}
+                  disabled={!name.trim() || !lookup || !argsOk || !conditionOk}
                   onClick={async () => {
                     setBusy(true);
                     try {
+                      const raw = target.trim();
                       await api.alerts.create(token, {
                         name: name.trim(),
                         skill_name: lookup,
+                        arguments: typedArgs(),
                         interval_s: Number(every),
-                        condition: "rows_returned",
+                        condition,
+                        condition_config:
+                          condition === "field_compare"
+                            ? {
+                                field: field.trim(),
+                                op,
+                                value: raw !== "" && !Number.isNaN(Number(raw)) ? Number(raw) : raw,
+                              }
+                            : {},
                         message_template: message.trim() || name.trim(),
                       });
-                      setAdding(false);
-                      setName("");
-                      setLookup("");
-                      setMessage("");
+                      reset();
                       await onRefresh();
                     } catch (e) {
                       onProblem(errorWords((e as ApiError).message));
@@ -667,7 +797,7 @@ function Alerts({
                 >
                   {t("admin.alerts.create")}
                 </Button>
-                <Button variant="ghost" onClick={() => setAdding(false)}>
+                <Button variant="ghost" onClick={reset}>
                   {t("common.cancel")}
                 </Button>
               </div>

@@ -21,12 +21,13 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 from urllib.parse import quote
 
 from ..domain import new_id
-from ..errors import KaragError, NotFoundError, ValidationError
+from ..errors import AccessDenied, KaragError, NotFoundError, ValidationError
 from ..secrets import seal, unseal
 from .rest import RestConnector
 from .sql import SqlConnector
@@ -161,16 +162,59 @@ def validate_spec(kind: str, config: dict) -> None:
             raise ValidationError("base_url must be an http(s) URL")
 
 
-def build_connector(spec: ConnectorSpec) -> SqlConnector | RestConnector:
+@dataclass(frozen=True)
+class SqlitePolicy:
+    """Which SQLite files a tenant's connection may open.
+
+    A SQLite "connection" is a path on the platform's own disk, so without a
+    rule an author could point one at the platform's databases — every
+    tenant's accounts, chats, audit trail and documents — or at another
+    tenant's upload. The rule: a tenant may open files under its own upload
+    folder (``<upload_dir>/<tenant>/``, where the Data page saves them) and
+    under directories an operator cleared explicitly, and never one of the
+    platform's own database files. Checked on the *resolved* path (symlinks
+    and ``env:`` indirection included) every time a connector is built.
+    """
+
+    upload_dir: str | None = None
+    extra_dirs: tuple[str, ...] = ()
+    deny_files: tuple[str, ...] = ()
+
+    def check(self, tenant_id: str, path: str) -> Path:
+        if not path or path.strip() == ":memory:":
+            raise AccessDenied("a SQLite connection needs a database file")
+        target = Path(path).expanduser().resolve()
+        denied = {Path(f).expanduser().resolve() for f in self.deny_files if f and f != ":memory:"}
+        if target in denied:
+            raise AccessDenied("that file belongs to the platform itself and cannot be a data source")
+        roots = [Path(d).expanduser().resolve() for d in self.extra_dirs if d]
+        if self.upload_dir:
+            roots.append((Path(self.upload_dir).expanduser() / tenant_id).resolve())
+        if not any(target == r or r in target.parents for r in roots):
+            raise AccessDenied(
+                "a SQLite file can only be one uploaded on the Data page "
+                "(or kept in a directory the operator cleared)"
+            )
+        return target
+
+
+def build_connector(
+    spec: ConnectorSpec, policy: SqlitePolicy | None = None
+) -> SqlConnector | RestConnector:
     """Materialise a live, guard-railed connector from its stored definition.
 
     Every SQL connector is created through :class:`SqlConnector`, which enforces
     read-only single statements, a row limit and a statement timeout — the
-    guardrails §6 requires. A REST connector can only issue GETs.
+    guardrails §6 requires. A REST connector can only issue GETs. A SQLite
+    path is checked against the deployment's :class:`SqlitePolicy` here, so a
+    stored definition that breaks the rule never opens anything.
     """
     if spec.kind == SQLITE:
+        path = resolve_secret(spec.config["path"])
+        if policy is not None:
+            policy.check(spec.tenant_id, path)
         return SqlConnector(
-            sqlite_path=resolve_secret(spec.config["path"]),
+            sqlite_path=path,
             default_row_limit=spec.row_limit,
             timeout_s=spec.timeout_s,
         )

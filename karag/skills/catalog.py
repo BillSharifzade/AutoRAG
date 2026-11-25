@@ -26,17 +26,20 @@ from dataclasses import dataclass
 
 from ..audit import AuditEvent, AuditLog, NullAuditLog
 from ..connectors.registry import (
+    SQLITE,
     ConnectorNotFound,
     ConnectorSpec,
     ConnectorStore,
+    SqlitePolicy,
     build_connector,
     new_connector,
+    resolve_secret,
 )
 from ..connectors.rest import RestConnector
 from ..connectors.sql import SqlConnector
 from ..domain import DataClass, Principal
 from ..errors import AccessDenied, ValidationError
-from ..rbac import can_access
+from ..rbac import audience, can_access, within
 from .agent_skill import SkillResource, make_agent_skill
 from .base import Skill
 from .definitions import (
@@ -108,10 +111,14 @@ class SkillCatalog:
         connectors: ConnectorStore,
         *,
         audit: AuditLog | None = None,
+        sqlite_policy: SqlitePolicy | None = None,
     ) -> None:
         self._registry = registry
         self._defs = definitions
         self._connectors = connectors
+        # which SQLite files a tenant may open (None: unrestricted, for tests
+        # and embedded use; the platform always sets one)
+        self.sqlite_policy = sqlite_policy
         self._audit = audit or NullAuditLog()
 
     # ---- connectors ------------------------------------------------------
@@ -128,6 +135,12 @@ class SkillCatalog:
         metadata: dict | None = None,
     ) -> ConnectorSpec:
         self._require_author(principal, "connector_create", name)
+        if kind == SQLITE and self.sqlite_policy is not None:
+            try:
+                self.sqlite_policy.check(principal.tenant_id, resolve_secret(str((config or {}).get("path", ""))))
+            except AccessDenied:
+                self._log(principal, "connector_create", "deny", name, {"kind": kind, "reason": "sqlite_path"})
+                raise
         spec = new_connector(
             principal.tenant_id,
             name=name,
@@ -165,7 +178,7 @@ class SkillCatalog:
         spec = self._connectors.get(tenant_id, connector_id)
         if spec is None:
             raise ConnectorNotFound(connector_id)
-        return build_connector(spec)
+        return build_connector(spec, self.sqlite_policy)
 
     # ---- skill definitions ----------------------------------------------
 
@@ -182,24 +195,30 @@ class SkillCatalog:
         path: str = "",
         instructions: str = "",
         resources: tuple[SkillResource, ...] = (),
-        required_data_class: DataClass = DataClass.OPERATIONAL,
+        required_data_class: DataClass | None = None,
         required_roles: tuple[str, ...] = (),
         row_limit: int | None = None,
         inject_tenant: bool = True,
         shared: bool = False,
     ) -> SkillDefinition:
         self._require_author(principal, "skill_create", name)
-        self._require_class_clearance(principal, required_data_class, "skill_create", name)
         # A lookup must name a connector that exists *in this tenant* — this is
         # what stops a skill from being pointed at another company's data
         # source. An agent skill reaches no data source, so it names none.
+        floor: list[DataClass] = []
         if kind in CONNECTOR_KINDS:
             spec = self._connectors.get(principal.tenant_id, connector_id)
             if spec is None:
                 raise ConnectorNotFound(connector_id)
             _require_matching_connector(kind, spec.kind)
+            floor = _data_floor(spec, sql if kind == SQL else "")
         else:
             connector_id = ""
+        if required_data_class is None:
+            # Not stated: the skill inherits the audience of what it reads.
+            required_data_class = _inherit(floor, required_roles)
+        self._require_class_clearance(principal, required_data_class, "skill_create", name)
+        _require_within_floor(required_data_class, floor, required_roles)
         self._require_free_name(principal.tenant_id, name)
         if kind == SQL and not param_schema:
             param_schema = infer_param_schema(sql)
@@ -262,6 +281,11 @@ class SkillCatalog:
             if spec is None:
                 raise ConnectorNotFound(defn.connector_id)
             _require_matching_connector(defn.kind, spec.kind)
+            _require_within_floor(
+                defn.required_data_class,
+                _data_floor(spec, defn.sql if defn.kind == SQL else ""),
+                defn.required_roles,
+            )
         else:
             defn.connector_id = ""
         if defn.name != old_name:
@@ -497,3 +521,83 @@ class SkillCatalog:
                 detail=detail,
             )
         )
+
+
+# ---- what a lookup reads decides who it may be offered to ------------------
+
+
+def _data_floor(spec, sql: str = "") -> list[DataClass]:
+    """The classes of the data a lookup on ``spec`` reads: the connection's
+    own audience (set when it was connected through the Data page) and, for
+    SQL, the audience of every narrowed table the statement names. A hidden
+    table may not be named at all."""
+    from ..integrations.dbsetup import sql_identifiers, table_classes  # noqa: PLC0415 (cycle)
+
+    meta = spec.metadata or {}
+    floor: list[DataClass] = []
+    if meta.get("data_class"):
+        try:
+            floor.append(DataClass(meta["data_class"]))
+        except ValueError:
+            floor.append(DataClass.most_restrictive())
+    if sql:
+        named = set(sql_identifiers(sql))
+        hidden = sorted(named & {str(t).lower() for t in meta.get("hidden_tables") or []})
+        if hidden:
+            raise ValidationError(
+                "this database hides " + ", ".join(hidden) + " from the assistant; "
+                "a lookup may not read it either"
+            )
+        floor += [klass for table, klass in table_classes(meta).items() if table in named]
+    return floor
+
+
+def _inherit(floor: list[DataClass], roles: tuple[str, ...] = ()) -> DataClass:
+    """The audience a lookup gets when its author does not state one: the
+    narrowest of what it reads. No floor (a connector registered by hand)
+    keeps the old default."""
+    if not floor:
+        return DataClass.OPERATIONAL
+    for candidate in floor:
+        if _fits(candidate, floor, roles):
+            return candidate
+    raise ValidationError(_mixed_message(floor))
+
+
+def _fits(chosen: DataClass, floor: list[DataClass], roles: tuple[str, ...]) -> bool:
+    """Whether everyone the lookup is offered to may read every part of the
+    data. Either the class itself is within each part's audience, or the
+    lookup is limited to roles that are cleared for every part (a lookup on an
+    HR-narrowed table in a financial database fits no single class, but
+    "ceo, admin" are cleared for both)."""
+    if all(within(chosen, c) for c in floor):
+        return True
+    return bool(roles) and all(set(roles) <= audience(c) for c in floor)
+
+
+def _mixed_message(floor: list[DataClass]) -> str:
+    common = set.intersection(*(set(audience(c)) for c in floor)) - {"platform_admin", "karag_engineer"}
+    hint = f" (for example: {', '.join(sorted(common))})" if common else ""
+    return (
+        "this lookup reads data with different audiences ("
+        + ", ".join(sorted({c.value for c in floor}))
+        + ") and no single one covers them all — limit it to roles cleared for "
+        f"every part{hint}, or split it into separate lookups"
+    )
+
+
+def _require_within_floor(
+    chosen: DataClass, floor: list[DataClass], roles: tuple[str, ...] = ()
+) -> None:
+    """A lookup may narrow the audience of the data it reads, never widen it:
+    offering payroll rows to everyone through an "operational" skill would
+    undo the class the connection (or table) was given."""
+    if not floor or _fits(chosen, floor, tuple(roles)):
+        return
+    wider = sorted({c.value for c in floor if not within(chosen, c)})
+    if len(set(floor)) > 1 and not any(all(within(c, o) for o in floor) for c in floor):
+        raise ValidationError(_mixed_message(floor))
+    raise ValidationError(
+        f"the data this lookup reads is limited to {', '.join(wider)}; "
+        f"a {chosen.value} lookup would show it to people outside that audience"
+    )

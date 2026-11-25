@@ -10,7 +10,8 @@ from __future__ import annotations
 import os
 
 from ..domain import Vector
-from ..errors import ConfigError
+from ..errors import ConfigError, GenerationError
+from .retry import post_with_retries
 
 
 def _httpx():
@@ -48,11 +49,16 @@ class VoyageEmbedder:
         if not self._api_key:
             raise ConfigError("VOYAGE_API_KEY is not set")
         httpx = _httpx()
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                f"{self.base_url}/embeddings",
+        try:
+            resp = await post_with_retries(
+                httpx, f"{self.base_url}/embeddings",
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json=self._body(texts),
+                json=self._body(texts), timeout=self.timeout,
             )
-            resp.raise_for_status()
-            return self._parse(resp.json())
+        except httpx.HTTPError as exc:
+            raise GenerationError(
+                f"the Voyage embeddings service could not be reached: {type(exc).__name__}: {exc}"
+            ) from exc
+        if resp.status_code >= 400:
+            raise GenerationError(f"Voyage embeddings failed ({resp.status_code}): {resp.text[:300]}")
+        return self._parse(resp.json())

@@ -25,7 +25,15 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
     @app.get("/v1/skills")
     async def list_skills(principal: Principal = Depends(principal_from)) -> dict:
         return {"skills": [
-            {"name": s.name, "description": s.description}
+            {
+                "name": s.name,
+                "description": s.description,
+                # data | output | procedure | platform | admin | web | engineer
+                "category": s.category,
+                "label": s.label,
+                # the parameters, so the console can ask for them (alerts)
+                "input_schema": s.input_schema,
+            }
             for s in plat.registry.visible_for(principal)
         ]}
 

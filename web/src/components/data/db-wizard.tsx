@@ -52,7 +52,9 @@ export function DbWizard({
   const [err, setErr] = useState("");
   const [result, setResult] = useState<DbConnectResult | null>(null);
   const [comment, setComment] = useState("");
-  const [audience, setAudience] = useState("operational");
+  // chosen in the review step; until then the connection is limited to the
+  // narrowest audience the author is cleared for (the server's default)
+  const [audience, setAudience] = useState("");
   const [roleValues, setRoleValues] = useState<string[]>([]);
   const [freeQuery, setFreeQuery] = useState(true);
   const [knowledge, setKnowledge] = useState(true);
@@ -89,7 +91,6 @@ export function DbWizard({
     try {
       const common = {
         name: name.trim() || (file ? file.name.replace(/\.[^.]+$/, "") : database.trim()),
-        data_class: audience as Connector["metadata"]["data_class"] & string,
         required_roles: roleValues,
         free_query: freeQuery,
         knowledge,
@@ -186,6 +187,7 @@ export function DbWizard({
                     onClick={() => {
                       setWay(w.value);
                       setTested(null);
+                      setErr(""); // a login error does not belong to the file upload
                     }}
                     className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 text-left transition-colors ${
                       active ? "border-accent bg-accent-soft/50" : "border-line bg-surface hover:border-line-strong"
@@ -368,7 +370,7 @@ export function DbWizard({
       {err && <Notice tone="bad">{err}</Notice>}
 
       <div className="flex flex-wrap items-center gap-3 border-t border-line pt-5">
-        <Button variant="cta" onClick={finish} busy={busy} disabled={!result}>
+        <Button variant="cta" onClick={finish} busy={busy} disabled={!result || !audience}>
           {t("data.db.done")}
         </Button>
         <Button variant="ghost" onClick={cancel} disabled={busy}>

@@ -147,8 +147,27 @@ export function sizeWords(bytes: number): string {
 /* ---------- errors ---------- */
 
 /** Turn an API failure into something that says what to do next. */
+/* Plain server phrases (karag/api/integrations.py _GATEWAY_REASONS, the
+   catalog's audience checks, the chat's stored failures) → this language. */
+const SERVER_PHRASES: [string, string][] = [
+  ["database refused the login", "err.db.login"],
+  ["no database with that name", "err.db.nodb"],
+  ["server name could not be found", "err.db.host"],
+  ["did not answer on that address", "err.db.port"],
+  ["secure connection (ssl) failed", "err.db.ssl"],
+  ["not a database that can be read", "err.db.file"],
+  ["may not read these tables", "err.db.perm"],
+  ["data source could not be reached", "err.db.unreachable"],
+  ["to people outside that audience", "err.widen"],
+  ["data with different audiences", "err.mixed"],
+  ["an alert can only run a data lookup", "err.alert.kind"],
+  ["answer could not be produced", "err.failed"],
+  ["touched something outside your access", "err.forbidden"],
+];
+
 export function errorWords(message: string): string {
   const m = message.toLowerCase();
+  for (const [phrase, key] of SERVER_PHRASES) if (m.includes(phrase)) return tr(key);
   if (m.includes("monthly ai budget")) return tr("err.budget");
   if (m.includes("too many requests") || m.includes("429")) return tr("err.rate");
   if (m.includes("403") || m.includes("forbidden") || m.includes("denied"))

@@ -23,6 +23,7 @@ import json
 import os
 
 from ..errors import ConfigError, GenerationError
+from .retry import post_with_retries
 from .base import ChatMessage, LLMResponse, MsgRole, ToolCall, ToolSpec
 
 
@@ -103,17 +104,19 @@ class OpenAIGenerator:
         if not self._api_key:
             raise ConfigError("OPENAI_API_KEY is not set")
         httpx = _httpx()
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                f"{self.base_url}/chat/completions",
+        try:
+            resp = await post_with_retries(
+                httpx, f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json=self._body(system, messages, tools, tool_choice),
+                json=self._body(system, messages, tools, tool_choice), timeout=self.timeout,
             )
-            if resp.status_code >= 400:
-                raise GenerationError(
-                    f"openai chat completions failed ({resp.status_code}): {resp.text}"
-                )
-            return self._parse(resp.json())
+        except httpx.HTTPError as exc:
+            raise GenerationError(f"openai could not be reached: {type(exc).__name__}: {exc}") from exc
+        if resp.status_code >= 400:
+            raise GenerationError(
+                f"openai chat completions failed ({resp.status_code}): {resp.text[:500]}"
+            )
+        return self._parse(resp.json())
 
     @staticmethod
     def _to_openai_messages(system: str, messages: list[ChatMessage]) -> list[dict]:

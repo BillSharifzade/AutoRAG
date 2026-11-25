@@ -253,7 +253,12 @@ def test_accounts_are_scoped_to_the_callers_tenant(client):
     client.post(
         "/v1/accounts", json={"user_id": "qa1", "roles": ["qa"]}, headers=_auth("t_admin")
     )
-    assert client.get("/v1/accounts", headers=_auth("t_evar")).json()["accounts"] == []
+    accounts = client.get("/v1/accounts", headers=_auth("t_evar")).json()["accounts"]
+    # Evar sees only Evar's people (here its own config-token admin, listed
+    # read-only) — never Koinoti's new account.
+    assert all(a["tenant_id"] == "evar" for a in accounts)
+    assert "qa1" not in {a["id"] for a in accounts}
+    assert {a["source"] for a in accounts} == {"config"}
 
 
 def test_rotate_issues_a_different_token(client):

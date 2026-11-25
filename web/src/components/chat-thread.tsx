@@ -54,6 +54,7 @@ import {
 } from "@/lib/api";
 import { useLocale, useT, type Locale } from "@/i18n";
 import { useAuth } from "@/lib/auth";
+import { useChat } from "@/lib/chat-store";
 import {
   useChatEngine,
   type Att,
@@ -107,7 +108,7 @@ const ACCEPT =
   "image/png,image/jpeg,image/webp,image/gif,.pdf,.docx,.xlsx,.pptx,.csv,.txt,.md";
 const MAX_ATTACHMENT_MB = 20;
 
-function Markdown({ text }: { text: string }) {
+export function Markdown({ text }: { text: string }) {
   return (
     <div className="prose prose-sm max-w-none text-[15px] leading-[1.75]">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
@@ -228,9 +229,23 @@ function WebSource({ c }: { c: Citation }) {
   );
 }
 
+/** Citations of one answer grouped by document, in marker order. */
+function groupByTitle(cites: Citation[]): Map<string, Citation[]> {
+  const out = new Map<string, Citation[]>();
+  for (const c of cites) {
+    const list = out.get(c.title) ?? [];
+    if (!list.some((x) => x.marker === c.marker)) list.push(c);
+    out.set(c.title, list);
+  }
+  return out;
+}
+
 function AnswerExtras({ answer }: { answer: Answer }) {
   const t = useT();
   const { locale } = useLocale();
+  const { token } = useAuth();
+  const { activeId } = useChat();
+  const [openSource, setOpenSource] = useState<string | null>(null);
   const hasMeta =
     answer.citations.length > 0 ||
     answer.skills_used.length > 0 ||
@@ -254,19 +269,57 @@ function AnswerExtras({ answer }: { answer: Answer }) {
         <PlaneBadge plane={answer.plane} />
         {answer.skills_used.map((s) => (
           <Chip key={s} tone="neutral">
-            <Wrench className="size-3" /> {s}
+            <Wrench className="size-3" /> {humanise(s)}
           </Chip>
         ))}
-        {[...new Map(docs.map((c) => [c.title, c])).values()].map((c) => (
-          <span
-            key={c.chunk_id}
-            title={c.snippet}
-            className="inline-flex cursor-help items-center gap-1 rounded-md border border-line bg-surface px-2 py-0.5 text-[11.5px] font-medium text-mut"
+        {[...groupByTitle(docs)].map(([title, cites]) => (
+          <button
+            key={title}
+            type="button"
+            onClick={() => setOpenSource((o) => (o === title ? null : title))}
+            aria-expanded={openSource === title}
+            title={t("chat.sources.show")}
+            className={`inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-0.5 text-[11.5px] font-medium transition-colors ${
+              openSource === title
+                ? "border-accent/60 bg-accent-soft text-accent-strong"
+                : "border-line bg-surface text-mut hover:border-line-strong hover:text-ink"
+            }`}
           >
-            <BookOpenText className="size-3" /> {c.title}
-          </span>
+            <BookOpenText className="size-3" />
+            <span className="font-mono text-[10.5px] text-faint">
+              {cites.map((c) => c.marker).join("")}
+            </span>
+            {title}
+          </button>
         ))}
       </div>
+
+      {/* The passages behind the markers — what the answer actually quoted,
+          so a reader can check [3] without leaving the chat. */}
+      <AnimatePresence initial={false}>
+        {openSource && (
+          <motion.div
+            key={openSource}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface-2 p-3">
+              {(groupByTitle(docs).get(openSource) ?? []).map((c) => (
+                <div key={c.chunk_id} className="flex gap-2 text-[12.5px] leading-relaxed">
+                  <span className="shrink-0 font-mono text-[11px] font-semibold text-accent">
+                    {c.marker}
+                  </span>
+                  <span className="text-mut">{c.snippet}</span>
+                </div>
+              ))}
+              <p className="text-[11px] text-faint">{openSource}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {web.length > 0 && (
         <div>
@@ -305,13 +358,17 @@ function AnswerExtras({ answer }: { answer: Answer }) {
       )}
 
       {answer.artifacts.map((a) => {
-        const ready = Boolean(a.content_base64);
+        // live bytes, or the copy kept with this chat
+        const ready = Boolean(a.content_base64 || (a.file_id && activeId));
         return (
           <motion.button
             key={a.filename}
             whileHover={ready ? { y: -1 } : undefined}
             whileTap={ready ? { scale: 0.97 } : undefined}
-            onClick={() => ready && downloadArtifact(a)}
+            onClick={() => {
+              if (!ready) return;
+              void downloadArtifact(a, activeId ? { token, chatId: activeId } : undefined).catch(() => {});
+            }}
             disabled={!ready}
             className={`flex w-fit items-center gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] font-semibold transition-colors ${
               ready
@@ -535,6 +592,7 @@ function Composer({
    remembered per user so it appears once, not every time the thread empties. */
 function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
   const t = useT();
+  const { locale } = useLocale();
   const { token, me } = useAuth();
   const [dismissed, setDismissed] = useState(true);
   const [prompt, setPrompt] = useState("");
@@ -545,13 +603,13 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
     if (!token || !storageKey) return;
     if (localStorage.getItem(storageKey) === "1") return;
     api
-      .onboarding(token)
+      .onboarding(token, locale)
       .then((o) => {
         setPrompt(o.prompt);
         setDismissed(false);
       })
       .catch(() => setDismissed(true));
-  }, [token, storageKey]);
+  }, [token, storageKey, locale]);
 
   const close = () => {
     setDismissed(true);

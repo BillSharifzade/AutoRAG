@@ -32,38 +32,42 @@ from ..domain import DataClass
 _SIGNALS: dict[DataClass, tuple[str, ...]] = {
     DataClass.FINANCIAL: (
         # en
-        "revenue", "profit", "invoic", "salar", "payroll", "budget", "ebitda",
+        "revenue", "profit", "invoic", "budget", "ebitda",
         "balance sheet", "cash flow", "margin", "turnover", "p&l", "receivable",
         # ru
-        "выручк", "прибыл", "убыт", "счёт-фактур", "счет-фактур", "зарплат",
+        "выручк", "прибыл", "убыт", "счёт-фактур", "счет-фактур",
         "бюджет", "баланс", "оборот", "марж", "дебиторск", "финанс",
-        "себестоимост", "налог",
+        "себестоимост", "налог", "наценк",
         # tg
-        "даромад", "фоида", "буҷет", "маош", "андоз", "хароҷот",
+        "даромад", "фоида", "буҷет", "андоз", "хароҷот",
     ),
     DataClass.HR: (
         # en
         "employee record", "personnel", "hiring", "termination", "performance review",
         "disciplinar", "sick leave", "vacation request", "resume", "onboarding",
         "grievance",
+        # pay by person or position is personnel data, not company finance
+        "salar", "payroll", "compensation",
         # ru
         "кадров", "кадры", "персонал", "трудовой договор", "увольнен",
         "приём на работу", "прием на работу", "отпуск", "больничн", "аттестац",
         "резюме", "дисциплинарн", "штатное расписание",
+        "зарплат", "оклад", "оплате труда", "оплаты труда",
         # tg
-        "кадрҳо", "кормандон", "шартномаи меҳнат", "рухсат", "таъинот",
+        "кадрҳо", "кормандон", "шартномаи меҳнат", "рухсат", "таъинот", "маош",
     ),
     DataClass.REGULATED: (
         # en
-        "sop", "gmp", "gxp", "capa", "deviation", "batch record", "validation protocol",
-        "audit finding", "regulator", "pharmacovigilance", "quality assurance",
-        "controlled substance", "licence", "license", "compliance",
+        # Not "SOP", "deviation" or "good practice": every pharmacy procedure
+        # uses them, and a cold-chain SOP is an everyday staff document.
+        "gmp", "gxp", "capa", "batch record", "validation protocol",
+        "audit finding", "regulator", "pharmacovigilance",
+        "controlled substance", "narcotic", "psychotropic", "licence", "license",
         # ru
-        "стандартная операционная процедура", "отклонен", "корректирующ",
-        "досье на серию", "валидац", "регулятор", "лиценз", "фармаконадзор",
-        "контроль качества", "надлежащ",
+        "корректирующ", "досье на серию", "валидац", "регулятор", "лиценз",
+        "фармаконадзор", "наркотическ", "психотропн", "прекурсор",
         # tg
-        "стандарти", "иҷозатнома", "танзим",
+        "иҷозатнома", "танзим", "нашъадор",
     ),
     DataClass.OPERATIONAL: (
         # en
@@ -173,13 +177,15 @@ def suggest_data_class(
     # Substantial evidence of a *more* restrictive class pulls the suggestion
     # up, even when a chattier class scores higher overall: a warehouse process
     # doc that also mentions batch records and GMP should be proposed as
-    # regulated. The test is absolute (a title hit, or two distinct body terms)
-    # rather than a ratio, so common operational vocabulary cannot drown out a
-    # smaller number of genuinely sensitive markers.
+    # regulated. The test is absolute (a title hit, or three distinct body
+    # terms) rather than a ratio, so common operational vocabulary cannot drown
+    # out a smaller number of genuinely sensitive markers. Two was too few: a
+    # leave policy granting extra days to staff "working with narcotic and
+    # psychotropic drugs" was proposed as regulated on that one sentence.
     for other in _PRECEDENCE[_PRECEDENCE.index(best) + 1:]:
         if other not in scores:
             continue
-        substantial = title_hits.get(other, 0) >= 1 or len(matched.get(other.value, [])) >= 2
+        substantial = title_hits.get(other, 0) >= 1 or len(matched.get(other.value, [])) >= 3
         if substantial:
             best = other
             confidence = min(confidence, 0.6)

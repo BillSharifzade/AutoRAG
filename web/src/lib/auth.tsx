@@ -15,14 +15,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, type Me } from "./api";
+import { ApiError, UNAUTHORIZED_EVENT, api, type Me } from "./api";
+
+/** Why the sign-in screen is showing, when it is not simply the first visit. */
+export type SignInProblem = "invalid" | "offline" | "expired" | null;
 
 interface AuthState {
   token: string;
   ready: boolean; // localStorage has been read
   model: string | null; // backend model name once health-checked
-  connect: (token: string) => void;
+  /** checks the token with the server before keeping it */
+  connect: (token: string) => Promise<SignInProblem>;
   disconnect: () => void;
+  /** set when a stored token stopped working */
+  problem: SignInProblem;
   theme: "light" | "dark";
   toggleTheme: () => void;
   /** who this token is, once resolved — drives role-gated navigation */
@@ -37,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [model, setModel] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [me, setMe] = useState<Me | null>(null);
+  const [problem, setProblem] = useState<SignInProblem>(null);
 
   /* localStorage does not exist while this renders on the server, so the token
      and theme cannot be seeded from it — the first client render has to match
@@ -73,7 +80,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // that off the effect's synchronous path — and the guard below stops a
     // slow lookup for the previous token from overwriting the current one.
     let live = true;
-    const lookup = token ? api.me(token).catch(() => null) : Promise.resolve(null);
+    const lookup = token
+      ? api.me(token).catch((e) => {
+          // a token that no longer works is signed out (see the 401 listener)
+          if (e instanceof ApiError && e.status === 401) return null;
+          return null;
+        })
+      : Promise.resolve(null);
     void lookup.then((m) => {
       if (live) setMe(m);
     });
@@ -82,15 +95,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [token]);
 
-  const connect = useCallback((t: string) => {
-    localStorage.setItem("karag_token", t);
-    setToken(t);
-  }, []);
-
   const disconnect = useCallback(() => {
     localStorage.removeItem("karag_token");
     setToken("");
     setMe(null);
+  }, []);
+
+  /* Any 401 — on load or mid-session — ends the session with a reason. */
+  useEffect(() => {
+    const onUnauthorized = () => {
+      if (!localStorage.getItem("karag_token")) return;
+      disconnect();
+      setProblem("expired");
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [disconnect]);
+
+  const connect = useCallback(async (t: string): Promise<SignInProblem> => {
+    try {
+      const who = await api.me(t);
+      localStorage.setItem("karag_token", t);
+      setProblem(null);
+      setMe(who);
+      setToken(t);
+      return null;
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      const why: SignInProblem = status === 401 || status === 403 ? "invalid" : "offline";
+      setProblem(why);
+      return why;
+    }
   }, []);
 
   const toggleTheme = useCallback(
@@ -100,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ token, ready, model, connect, disconnect, theme, toggleTheme, me }}
+      value={{ token, ready, model, connect, disconnect, theme, toggleTheme, me, problem }}
     >
       {children}
     </AuthContext.Provider>

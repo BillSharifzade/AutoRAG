@@ -159,6 +159,10 @@ class Settings:
 
     # where uploaded database files (SQLite, imported SQL dumps) are kept
     upload_dir: str = "./data/uploads"
+    # extra directories (comma-separated) whose SQLite files any tenant's
+    # author may connect; a tenant's own uploads are always allowed, the
+    # platform's own databases never
+    sqlite_allowed_dirs: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -222,4 +226,5 @@ class Settings:
             tenant_monthly_budget_usd=_float_or_none(os.environ.get("KARAG_TENANT_MONTHLY_BUDGET_USD")),
             rate_limit_per_minute=int(_get("KARAG_RATE_LIMIT_PER_MINUTE", "30")),
             upload_dir=_get("KARAG_UPLOAD_DIR", "./data/uploads"),
+            sqlite_allowed_dirs=_get("KARAG_SQLITE_ALLOWED_DIRS", ""),
         )

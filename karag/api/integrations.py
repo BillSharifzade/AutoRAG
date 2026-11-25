@@ -66,7 +66,9 @@ class DbTestRequest(BaseModel):
 
 class DbConnectRequest(DbTestRequest):
     name: str
-    data_class: DataClass = DataClass.OPERATIONAL
+    # None: start at the narrowest audience the caller is cleared for, until
+    # the review step says who it is for
+    data_class: DataClass | None = None
     required_roles: list[str] = []
     free_query: bool = True
     knowledge: bool = True
@@ -93,10 +95,42 @@ class DbOptionsRequest(BaseModel):
     hidden_tables: list[str] | None = None
 
 
+# Driver messages → one plain sentence. Found on the deployed server: the
+# Data page showed psycopg's raw "connection to server at … failed: …" text to
+# pharmacists. The technical text stays, in brackets, for whoever debugs it.
+_GATEWAY_REASONS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("password authentication failed", "access denied for user", "authentication failed",
+      "no password supplied", "role \"", "login failed"),
+     "The database refused the login — check the user name and password."),
+    (("unknown database",) , "There is no database with that name on this server."),
+    (("could not translate host name", "name or service not known", "nodename nor servname",
+      "getaddrinfo", "unknown mysql server host", "temporary failure in name resolution"),
+     "The server name could not be found — check the address."),
+    (("connection refused", "can't connect", "timed out", "timeout", "no route to host",
+      "network is unreachable", "connection reset"),
+     "The server did not answer on that address and port."),
+    (("ssl", "tls", "certificate"),
+     "The secure connection (SSL) failed — try switching SSL on or off."),
+    (("file is not a database", "not a database", "malformed"),
+     "This file is not a database that can be read."),
+    (("permission denied for", "insufficient privilege", "command denied"),
+     "The database login works but may not read these tables."),
+)
+
+
 def _gateway_error(exc: Exception) -> HTTPException:
-    """A database or endpoint that could not be reached is a 502 with the reason."""
-    text = f"{type(exc).__name__}: {exc}"
-    return HTTPException(status_code=502, detail=text[:400])
+    """A database or endpoint that could not be reached is a 502 with the
+    reason in plain words first, then the technical text."""
+    technical = f"{type(exc).__name__}: {exc}"
+    low = technical.lower()
+    if "does not exist" in low and "database" in low:
+        plain = "There is no database with that name on this server."
+    else:
+        plain = next(
+            (msg for needles, msg in _GATEWAY_REASONS if any(n in low for n in needles)),
+            "The data source could not be reached.",
+        )
+    return HTTPException(status_code=502, detail=f"{plain} [{technical[:300]}]")
 
 
 def mount_integrations(app: FastAPI, plat, principal_from) -> None:
@@ -212,7 +246,7 @@ def mount_integrations(app: FastAPI, plat, principal_from) -> None:
     async def upload_database(
         file: UploadFile = File(...),
         name: str = Form(""),
-        data_class: DataClass = Form(DataClass.OPERATIONAL),
+        data_class: DataClass | None = Form(None),
         required_roles: str = Form(""),
         free_query: bool = Form(True),
         knowledge: bool = Form(True),

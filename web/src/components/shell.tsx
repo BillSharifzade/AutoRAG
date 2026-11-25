@@ -173,9 +173,10 @@ function LocaleSwitch({ compact = false }: { compact?: boolean }) {
 /* ---------------- connect gate ---------------- */
 
 function ConnectGate() {
-  const { connect } = useAuth();
+  const { connect, problem } = useAuth();
   const t = useT();
   const [value, setValue] = useState("");
+  const [checking, setChecking] = useState(false);
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
       {/* Form panel */}
@@ -197,9 +198,12 @@ function ConnectGate() {
           <p className="mt-2 text-[15px] text-mut">{t("login.sub")}</p>
 
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              if (value.trim()) connect(value.trim());
+              if (!value.trim() || checking) return;
+              setChecking(true);
+              await connect(value.trim());
+              setChecking(false);
             }}
             className="mt-8 flex flex-col gap-3.5"
           >
@@ -212,9 +216,14 @@ function ConnectGate() {
               aria-label={t("login.token")}
               className="h-12"
             />
-            <Button type="submit" disabled={!value.trim()} className="h-12 text-[15px]">
+            <Button type="submit" disabled={!value.trim() || checking} className="h-12 text-[15px]">
               {t("login.continue")} <ArrowRight className="size-4" />
             </Button>
+            {problem && !checking && (
+              <p role="alert" className="text-[13px] text-bad">
+                {t(`login.problem.${problem}`)}
+              </p>
+            )}
           </form>
         </motion.div>
       </div>

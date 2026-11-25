@@ -118,6 +118,11 @@ class ConversationStore(Protocol):
     def append(self, owner: Owner, cid: str, message: StoredMessage) -> bool: ...
     def rename(self, owner: Owner, cid: str, title: str) -> bool: ...
     def delete(self, owner: Owner, cid: str) -> bool: ...
+    # Files an answer generated, kept so the chat history can still hand them
+    # over after a reload. Owner-scoped exactly like the conversation.
+    def put_file(self, owner: Owner, cid: str, file_id: str, filename: str,
+                 mime: str, data: bytes) -> bool: ...
+    def get_file(self, owner: Owner, cid: str, file_id: str) -> tuple[str, str, bytes] | None: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -128,6 +133,7 @@ class ConversationStore(Protocol):
 class InMemoryConversationStore:
     def __init__(self) -> None:
         self._by_id: dict[str, Conversation] = {}
+        self._files: dict[tuple[str, str], tuple[str, str, bytes]] = {}
         self._lock = threading.Lock()
 
     def create(
@@ -204,7 +210,23 @@ class InMemoryConversationStore:
             if conv is None:
                 return False
             del self._by_id[cid]
+            for key in [k for k in self._files if k[0] == cid]:
+                del self._files[key]
             return True
+
+    def put_file(self, owner: Owner, cid: str, file_id: str, filename: str,
+                 mime: str, data: bytes) -> bool:
+        with self._lock:
+            if self._owned(owner, cid) is None:
+                return False
+            self._files[(cid, file_id)] = (filename, mime, bytes(data))
+            return True
+
+    def get_file(self, owner: Owner, cid: str, file_id: str) -> tuple[str, str, bytes] | None:
+        with self._lock:
+            if self._owned(owner, cid) is None:
+                return None
+            return self._files.get((cid, file_id))
 
 
 # --------------------------------------------------------------------------- #
@@ -249,6 +271,19 @@ class SqliteConversationStore:
                     answer TEXT,
                     attachments TEXT,
                     PRIMARY KEY (conversation_id, seq)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_files (
+                    conversation_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    mime TEXT NOT NULL,
+                    data BLOB NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (conversation_id, id)
                 )
                 """
             )
@@ -397,5 +432,28 @@ class SqliteConversationStore:
             if row is None:
                 return False
             self._conn.execute("DELETE FROM messages WHERE conversation_id=?", (cid,))
+            self._conn.execute("DELETE FROM chat_files WHERE conversation_id=?", (cid,))
             self._conn.execute("DELETE FROM conversations WHERE id=?", (cid,))
         return True
+
+    def put_file(self, owner: Owner, cid: str, file_id: str, filename: str,
+                 mime: str, data: bytes) -> bool:
+        with self._lock, self._conn:
+            if self._row(owner, cid) is None:
+                return False
+            self._conn.execute(
+                "INSERT OR REPLACE INTO chat_files (conversation_id, id, filename, mime, data,"
+                " created_at) VALUES (?,?,?,?,?,?)",
+                (cid, file_id, filename, mime, sqlite3.Binary(data), time.time()),
+            )
+        return True
+
+    def get_file(self, owner: Owner, cid: str, file_id: str) -> tuple[str, str, bytes] | None:
+        with self._lock:
+            if self._row(owner, cid) is None:
+                return None
+            row = self._conn.execute(
+                "SELECT filename, mime, data FROM chat_files WHERE conversation_id=? AND id=?",
+                (cid, file_id),
+            ).fetchone()
+        return (row["filename"], row["mime"], bytes(row["data"])) if row else None

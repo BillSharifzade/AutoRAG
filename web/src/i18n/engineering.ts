@@ -9,6 +9,8 @@ import type { Dictionary } from "./index";
 export const engineering: Dictionary = {
   en: {
     "engineering.restricted.what": "Reviewing KARAG's own code is restricted",
+    "engineering.unavailable.what": "Proposing code changes isn't available in this deployment.",
+    "engineering.unavailable.who": "It needs a git checkout of KARAG with git installed — a container image ships without one. Run KARAG from a checkout to use it.",
     "engineering.restricted.who":
       "This screen decides whether a change reaches the running platform. It's limited to platform engineers, and only a platform operator can grant that.",
 
@@ -69,6 +71,8 @@ export const engineering: Dictionary = {
   },
   ru: {
     "engineering.restricted.what": "Проверка кода самого KARAG ограничена",
+    "engineering.unavailable.what": "Предлагать изменения кода в этом развёртывании нельзя.",
+    "engineering.unavailable.who": "Нужна git-копия KARAG и установленный git — в образе контейнера их нет. Запустите KARAG из копии репозитория, чтобы пользоваться этим.",
     "engineering.restricted.who":
       "Здесь решается, попадёт ли изменение на работающую платформу. Доступ есть только у инженеров платформы, и выдать его может только оператор платформы.",
 

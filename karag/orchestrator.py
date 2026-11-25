@@ -329,15 +329,24 @@ class Orchestrator:
             else:
                 await emit({"type": "delta", "text": text})
 
+        categories = {s.name: s.category for s in skills}
+
         def finish(resp_text: str, *, extra: dict | None = None, wrap_up: bool = False) -> Answer:
-            plane = "data" if skills_used else "knowledge"
-            if skills_used and shown:
-                plane = "mixed"
             text = resp_text
             fallback_used = False
             if not text:
                 text = self._fallback(shown)
                 fallback_used = bool(shown)
+            citations = self._answer_citations(
+                text, shown, skill_citations, fallback_used=fallback_used
+            )
+            # The plane says what the answer rests on: figures from a data
+            # skill, passages it cites, or both. Making a file or reading the
+            # handbook is neither, and a passage retrieved but not cited does
+            # not make an answer "knowledge".
+            data_used = any(categories.get(n, "data") == "data" for n in skills_used)
+            docs_cited = any(c.document_id != "web" for c in citations)
+            plane = "mixed" if data_used and docs_cited else "data" if data_used else "knowledge"
             diagnostics: dict = {
                 "model": generator.model, "usage": usage_total,
                 "retrieved": retrieved_log, **(extra or {}),
@@ -350,9 +359,7 @@ class Orchestrator:
                 principal,
                 Answer(
                     text=text,
-                    citations=self._answer_citations(
-                        text, shown, skill_citations, fallback_used=fallback_used
-                    ),
+                    citations=citations,
                     plane=plane,
                     skills_used=skills_used,
                     queries_shown=queries_shown,

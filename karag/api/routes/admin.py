@@ -128,11 +128,23 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
 
     @app.get("/v1/accounts")
     async def list_accounts(principal: Principal = Depends(principal_from)) -> dict:
-        return {
-            "accounts": [
-                a.to_public_dict() for a in plat.directory_service.list_accounts(principal)
-            ]
-        }
+        accounts = [
+            {**a.to_public_dict(), "source": "directory"}
+            for a in plat.directory_service.list_accounts(principal)
+        ]
+        # People who sign in with a token from the server's configuration
+        # (KARAG_TOKENS) are listed too, read-only: they are managed in the
+        # config, not here — but an admin should still see who has access.
+        known = {a["id"] for a in accounts}
+        for p in ctx.config_principals():
+            if p.tenant_id == principal.tenant_id and p.user_id not in known:
+                known.add(p.user_id)
+                accounts.append({
+                    "id": p.user_id, "tenant_id": p.tenant_id, "display_name": p.user_id,
+                    "roles": list(p.roles), "language": "auto", "active": True,
+                    "created_at": 0, "has_token": True, "source": "config",
+                })
+        return {"accounts": accounts}
 
     @app.patch("/v1/accounts/{user_id}")
     async def update_account(

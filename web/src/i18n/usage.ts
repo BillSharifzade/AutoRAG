@@ -41,6 +41,8 @@ export const usage: Dictionary = {
     "usage.budget.sub": "Share of the token budget consumed.",
     "usage.budget.money.sub": "Share of this month's AI budget already spent.",
     "usage.budget.money": "{spent} of {budget} · {month}",
+    "usage.budget.none": "No monthly limit set · {spent} spent in {month}",
+    "usage.budget.none.sub": "A platform operator can set a monthly AI budget for your company.",
     "usage.ofBudget": "of a {n} token budget",
 
     "usage.split": "Token split",
@@ -102,6 +104,8 @@ export const usage: Dictionary = {
     "usage.budget.sub": "Какая доля бюджета токенов израсходована.",
     "usage.budget.money.sub": "Какая доля месячного бюджета на ИИ уже потрачена.",
     "usage.budget.money": "{spent} из {budget} · {month}",
+    "usage.budget.none": "Месячный лимит не задан · потрачено {spent} за {month}",
+    "usage.budget.none.sub": "Месячный бюджет на ИИ для компании задаёт оператор платформы.",
     "usage.ofBudget": "из бюджета {n} токенов",
 
     "usage.split": "Вход и выход",

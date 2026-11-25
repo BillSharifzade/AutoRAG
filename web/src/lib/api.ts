@@ -14,8 +14,10 @@ export interface ArtifactPayload {
   filename: string;
   mime: string;
   size_bytes: number;
-  // absent for artifacts reloaded from saved history (bytes aren't persisted)
+  // present on the live answer; reloaded history carries `file_id` instead
   content_base64?: string;
+  /** the file kept with the chat — fetched on demand from /v1/chats/{id}/files */
+  file_id?: string;
 }
 
 export interface Answer {
@@ -32,6 +34,14 @@ export interface Answer {
 export interface SkillInfo {
   name: string;
   description: string;
+  /** data | output | procedure | platform | admin | web | engineer — alerts run "data" only */
+  category?: string;
+  /** a human name ("Аптеки"), when the skill has one */
+  label?: string;
+  input_schema?: {
+    properties?: Record<string, { type?: string; description?: string; enum?: unknown[] }>;
+    required?: string[];
+  };
 }
 
 export interface Assistant {
@@ -72,7 +82,11 @@ export interface Me {
   roles: string[];
   language: Language;
   can_author_skills: boolean;
+  /** may add and remove documents (an ingest role) */
+  can_ingest?: boolean;
   can_edit_code: boolean;
+  /** false where this deployment has no git checkout (e.g. a container) */
+  code_changes_available?: boolean;
 }
 
 /* ---------- platform self-knowledge ---------- */
@@ -414,6 +428,9 @@ export interface Account {
   active: boolean;
   created_at: number;
   has_token: boolean;
+  /** "config": signs in with a token from the server's configuration —
+      listed for visibility, managed there, read-only here */
+  source?: "directory" | "config";
 }
 
 export interface AuditEvent {
@@ -546,6 +563,17 @@ export class ApiError extends Error {
   }
 }
 
+/* A 401 means this browser's token no longer works (rotated, suspended,
+   mistyped). The session provider listens and signs out with a reason —
+   otherwise every page would quietly render as if it were simply empty. */
+export const UNAUTHORIZED_EVENT = "karag:unauthorized";
+
+function announceUnauthorized(status: number) {
+  if (status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
+}
+
 async function request<T>(
   token: string,
   path: string,
@@ -564,6 +592,7 @@ async function request<T>(
       typeof data === "object" && data !== null && "detail" in data
         ? String((data as { detail: unknown }).detail)
         : `HTTP ${res.status}`;
+    announceUnauthorized(res.status);
     throw new ApiError(detail, res.status);
   }
   return data as T;
@@ -589,7 +618,8 @@ export const api = {
   skills: (token: string) =>
     request<{ skills: SkillInfo[] }>(token, "/v1/skills"),
 
-  onboarding: (token: string) => request<Onboarding>(token, "/v1/onboarding"),
+  onboarding: (token: string, lang: string = "en") =>
+    request<Onboarding>(token, `/v1/onboarding?lang=${encodeURIComponent(lang)}`),
 
   code: {
     list: (token: string, status?: string) =>
@@ -713,7 +743,8 @@ export const api = {
       token: string,
       body: DbLogin & {
         name: string;
-        data_class: DataClass;
+        /** omitted: starts at the narrowest audience until the review step */
+        data_class?: DataClass;
         required_roles: string[];
         free_query: boolean;
         knowledge: boolean;
@@ -729,7 +760,7 @@ export const api = {
       file: File,
       fields: {
         name: string;
-        data_class: DataClass;
+        data_class?: DataClass;
         required_roles: string[];
         free_query: boolean;
         knowledge: boolean;
@@ -740,7 +771,7 @@ export const api = {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("name", fields.name);
-      fd.append("data_class", fields.data_class);
+      if (fields.data_class) fd.append("data_class", fields.data_class);
       fd.append("required_roles", fields.required_roles.join(","));
       fd.append("free_query", String(fields.free_query));
       fd.append("knowledge", String(fields.knowledge));
@@ -1033,6 +1064,7 @@ async function* streamEvents(
     } catch {
       /* not JSON */
     }
+    announceUnauthorized(res.status);
     throw new ApiError(detail, res.status);
   }
   const reader = res.body.getReader();
@@ -1061,15 +1093,35 @@ async function* streamEvents(
 }
 
 /** Trigger a browser download for a base64-encoded artifact. */
-export function downloadArtifact(a: ArtifactPayload): void {
-  if (!a.content_base64) return; // reloaded from history — bytes not persisted
-  const bytes = atob(a.content_base64);
-  const buf = new Uint8Array(bytes.length);
-  for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([buf], { type: a.mime }));
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = a.filename;
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/** Download a generated file: from the live answer's bytes, or — for an
+    answer reloaded from history — from the copy kept with the chat. */
+export async function downloadArtifact(
+  a: ArtifactPayload,
+  saved?: { token: string; chatId: string },
+): Promise<void> {
+  if (a.content_base64) {
+    const bytes = atob(a.content_base64);
+    const buf = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+    saveBlob(new Blob([buf], { type: a.mime }), a.filename);
+    return;
+  }
+  if (!a.file_id || !saved) return;
+  const res = await fetch(`/v1/chats/${saved.chatId}/files/${a.file_id}`, {
+    headers: { Authorization: `Bearer ${saved.token}` },
+  });
+  if (!res.ok) {
+    announceUnauthorized(res.status);
+    throw new ApiError(`HTTP ${res.status}`, res.status);
+  }
+  saveBlob(await res.blob(), a.filename);
 }

@@ -213,6 +213,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
 
     return [
         Skill(
+            category="admin",
             name="create_accounts",
             description=(
                 "Create one or many user accounts in this tenant and return their "
@@ -240,6 +241,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="admin",
             name="list_accounts",
             description="List the user accounts in this tenant with their roles and status.",
             input_schema={"type": "object", "properties": {}, "required": [],
@@ -250,6 +252,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="admin",
             name="set_account_roles",
             description="Replace the roles on an existing account in this tenant.",
             input_schema={
@@ -267,6 +270,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="admin",
             name="deactivate_account",
             description=(
                 "Suspend an account so its token stops working. Destructive: call "
@@ -287,6 +291,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="admin",
             name="usage_stats",
             description=(
                 "This tenant's token usage, request count and estimated cost, split "
@@ -300,6 +305,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="admin",
             name="audit_summary",
             description=(
                 "Recent audit events for this tenant: who did what, allowed or "
@@ -317,6 +323,7 @@ def admin_skills(platform, *, audit: AuditLog | None = None) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="admin",
             name="tenant_inventory",
             description=(
                 "What this tenant currently has that the asking user may see: "

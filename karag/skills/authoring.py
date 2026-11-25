@@ -124,6 +124,7 @@ async def _create_pdf(principal: Principal, args: dict) -> SkillResult:
 
 def write_file_skill(tenant_id: str = "*") -> Skill:
     return Skill(
+        category="output",
         name="write_file",
         description=(
             "Create a downloadable plain-text file for the user: markdown, source "
@@ -149,6 +150,7 @@ def write_file_skill(tenant_id: str = "*") -> Skill:
 
 def create_spreadsheet_skill(tenant_id: str = "*") -> Skill:
     return Skill(
+        category="output",
         name="create_spreadsheet",
         description=(
             "Create a downloadable Excel (.xlsx) or CSV spreadsheet from headers "
@@ -172,6 +174,7 @@ def create_spreadsheet_skill(tenant_id: str = "*") -> Skill:
 
 def create_document_skill(tenant_id: str = "*") -> Skill:
     return Skill(
+        category="output",
         name="create_document",
         description=(
             "Create a downloadable Word document (.docx) from a title and "
@@ -196,6 +199,7 @@ def create_document_skill(tenant_id: str = "*") -> Skill:
 
 def create_presentation_skill(tenant_id: str = "*") -> Skill:
     return Skill(
+        category="output",
         name="create_presentation",
         description=(
             "Create a downloadable PowerPoint (.pptx) deck: a branded cover plus "
@@ -228,6 +232,7 @@ def create_presentation_skill(tenant_id: str = "*") -> Skill:
 
 def create_pdf_skill(tenant_id: str = "*") -> Skill:
     return Skill(
+        category="output",
         name="create_pdf",
         description=(
             "Create a downloadable PDF from a title and paragraphs. Latin text "

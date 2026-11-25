@@ -87,6 +87,7 @@ def search_web_skill(
         )
 
     return Skill(
+        category="web",
         name="search_web",
         description=(
             "Searches the public internet and returns titles, links and short "
@@ -161,6 +162,7 @@ def read_web_page_skill(
         )
 
     return Skill(
+        category="web",
         name="read_web_page",
         description=(
             "Opens one public web page and returns its text. Use after "

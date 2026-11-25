@@ -588,3 +588,24 @@ class ChainResolver:
             except AccessDenied:
                 continue
         raise AccessDenied("invalid token")
+
+    def config_principals(self) -> list[Principal]:
+        out: list[Principal] = []
+        for resolver in self._resolvers:
+            out.extend(getattr(resolver, "config_principals", lambda: [])())
+        return out
+
+
+def ensure_config_tenants(directory: "DirectoryStore", principals: list[Principal]) -> list[str]:
+    """Give every tenant named by a static token a directory record.
+
+    Accounts from ``KARAG_TOKENS`` sign in without a tenant row, which left a
+    deployment's own company invisible to the platform operator — no way to
+    see it, suspend it or give it a budget. Returns the ids created.
+    """
+    created: list[str] = []
+    for tenant_id in sorted({p.tenant_id for p in principals}):
+        if directory.get_tenant(tenant_id) is None:
+            directory.create_tenant(Tenant(id=tenant_id, name=tenant_id))
+            created.append(tenant_id)
+    return created

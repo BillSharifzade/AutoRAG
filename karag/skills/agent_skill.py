@@ -267,6 +267,7 @@ def make_agent_skill(
         )
 
     return Skill(
+        category="procedure",
         name=name,
         description=description,
         input_schema=_OPEN_SCHEMA,

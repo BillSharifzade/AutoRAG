@@ -43,6 +43,9 @@ export const documents: Dictionary = {
     "documents.reading": "Reading the file…",
     "documents.guess.title": "This looks like it belongs under “{kind}”",
     "documents.guess.note": "It’s only a guess — your choice on the right is what counts.",
+    "documents.guess.why": "The title or text mentions {words}.",
+    "documents.guess.none":
+      "Nothing in this file says who it is for — please choose on the right.",
 
     "documents.who.title": "Who should be able to see this?",
     "documents.who.sub":
@@ -112,6 +115,9 @@ export const documents: Dictionary = {
     "documents.reading": "Читаем файл…",
     "documents.guess.title": "Похоже, это подходит под «{kind}»",
     "documents.guess.note": "Это лишь предположение — решает ваш выбор справа.",
+    "documents.guess.why": "В названии или тексте встречается: {words}.",
+    "documents.guess.none":
+      "По содержанию не понять, для кого этот файл, — выберите справа сами.",
 
     "documents.who.title": "Кто должен это видеть?",
     "documents.who.sub":

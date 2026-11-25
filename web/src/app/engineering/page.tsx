@@ -111,12 +111,15 @@ export default function EngineeringPage() {
   }
 
   if (me && !me.can_edit_code) {
+    // The role is right but this deployment cannot branch and test code
+    // (a container ships without git) — say that, not "ask for access".
+    const unavailable = me.code_changes_available === false && me.roles.includes("karag_engineer");
     return (
       <Stagger>
         <StaggerItem>
           <Restricted
-            what={t("engineering.restricted.what")}
-            who={t("engineering.restricted.who")}
+            what={t(unavailable ? "engineering.unavailable.what" : "engineering.restricted.what")}
+            who={t(unavailable ? "engineering.unavailable.who" : "engineering.restricted.who")}
             yourRole={me.roles.map(roleLabel).join(", ")}
           />
         </StaggerItem>

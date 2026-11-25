@@ -87,7 +87,8 @@ export function historyToTurns(messages: StoredChatMessage[]): Turn[] {
     }
     const plane = m.answer?.plane;
     if (plane === "error") {
-      return { role: "karag" as const, text: m.text, error: true };
+      // stored in English by the server; shown in the interface language
+      return { role: "karag" as const, text: errorWords(m.text), error: true };
     }
     if (plane === "stopped") {
       return { role: "karag" as const, text: "", stopped: true };

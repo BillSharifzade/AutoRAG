@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 import json
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from ...assistants import AssistantNotFound, can_manage
 from ...conversations import Conversation, StoredMessage
-from ...domain import Principal
+from ...domain import new_id, Principal
 from ...errors import AccessDenied
 from ...llm.base import ImagePart
 from ..common import (
@@ -29,6 +30,10 @@ from ..common import (
     _status_for,
     _stored_answer,
 )
+
+
+# Files larger than this are handed over once and not kept with the chat.
+_MAX_KEPT_FILE_BYTES = 25 * 1024 * 1024
 
 
 def mount(app: FastAPI, ctx: ApiContext) -> None:
@@ -148,6 +153,27 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
             raise HTTPException(status_code=404, detail="chat not found")
         return conv.to_dict()
 
+    @app.get("/v1/chats/{chat_id}/files/{file_id}")
+    async def chat_file(
+        chat_id: str, file_id: str, principal: Principal = Depends(principal_from)
+    ) -> Response:
+        """A file an answer in this chat generated — only for the chat's owner."""
+        found = plat.conversations.get_file(
+            (principal.tenant_id, principal.user_id), chat_id, file_id
+        )
+        if found is None:
+            raise HTTPException(status_code=404, detail="file not found")
+        filename, mime, data = found
+        quoted = urllib.parse.quote(filename)
+        return Response(
+            content=data,
+            media_type=mime or "application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quoted}",
+                "Cache-Control": "private, no-store",
+            },
+        )
+
     @app.patch("/v1/chats/{chat_id}")
     async def rename_chat(
         chat_id: str,
@@ -245,12 +271,19 @@ def mount(app: FastAPI, ctx: ApiContext) -> None:
             )
             raise
 
+        stored = _stored_answer(answer)
+        # Generated files are kept with the chat (up to a size cap), so the
+        # history can hand them over again after a reload.
+        for summary, artifact in zip(stored.get("artifacts", []), answer.artifacts):
+            if len(artifact.content) <= _MAX_KEPT_FILE_BYTES:
+                file_id = new_id("file")
+                if plat.conversations.put_file(owner, conv.id, file_id, artifact.filename,
+                                               artifact.mime, artifact.content):
+                    summary["file_id"] = file_id
         plat.conversations.append(
             owner,
             conv.id,
-            StoredMessage(
-                role="assistant", text=answer.text, answer=_stored_answer(answer)
-            ),
+            StoredMessage(role="assistant", text=answer.text, answer=stored),
         )
 
         refreshed = plat.conversations.get(owner, conv.id)

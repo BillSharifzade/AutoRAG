@@ -50,6 +50,7 @@ from .common import (  # noqa: F401 — re-exported for tests
     _HISTORY_CHARS,
     _history_messages,
 )
+from ..tenants import ensure_config_tenants
 from .routes import admin as admin_routes
 from .routes import chat as chat_routes
 from .routes import documents as documents_routes
@@ -158,9 +159,13 @@ def create_app(
             return tenant.default_language
         return plat.settings.default_language
 
+    config_principals = getattr(res, "config_principals", lambda: [])
+    # A company that signs in with config tokens is a real tenant too.
+    ensure_config_tenants(plat.directory, config_principals())
     ctx = ApiContext(
         plat=plat, principal_from=principal_from, language_for=language_for,
         prices=prices, scheduler=scheduler, bot_svc=bot_svc,
+        config_principals=config_principals,
     )
     for module in (platform_routes, skills_routes, admin_routes, documents_routes,
                    chat_routes, webhook_routes):

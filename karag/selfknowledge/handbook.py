@@ -248,9 +248,27 @@ def guides_for(principal: Principal) -> list[tuple[str, str]]:
     return out
 
 
-def onboarding_prompt(principal: Principal) -> str:
-    """The question the "show me around" tip sends on the user's behalf."""
+def onboarding_prompt(principal: Principal, language: str = "en") -> str:
+    """The question the "show me around" tip sends on the user's behalf.
+
+    Written in the interface language: answers follow the language of the
+    question, so an English prompt in a Russian console produced an English
+    tour.
+    """
     roles = ", ".join(principal.roles) or "no assigned role"
+    if language == "ru":
+        return (
+            f"Проведи для меня короткую экскурсию по платформе KARAG для моей роли ({roles}). "
+            "Расскажи, что я могу здесь делать, чего не могу и почему, и предложи две-три "
+            "конкретные вещи, которые стоит попробовать первыми. Опирайся на справочник "
+            "платформы, который тебе дан."
+        )
+    if language == "tg":
+        return (
+            f"Барои нақши ман ({roles}) платформаи KARAG-ро мухтасар муаррифӣ кун: чӣ кор карда "
+            "метавонам, чӣ кор карда наметавонам ва чаро, ва ду-се кори мушаххасро барои оғоз "
+            "пешниҳод кун. Аз дастури платформа истифода бар."
+        )
     return (
         f"Give me a short guided tour of the KARAG platform for my role ({roles}). "
         "Cover what I can do here, what I cannot and why, and two or three concrete "

@@ -125,3 +125,43 @@ async def test_narrowing_requires_clearance_and_a_known_audience(setup):
         await plat.databases.set_options(author, cid, table_classes={"sales": "hr"})
     with pytest.raises(ValidationError):
         await plat.databases.set_options(ADMIN, cid, table_classes={"sales": "top-secret"})
+
+
+# ---------- authored lookups cannot widen what the data allows ----------
+
+
+def _lookup(plat, cid, sql, **kw):
+    return plat.catalog.create_skill(
+        ADMIN, name=kw.pop("name", "shop_lookup"), description="d", kind="sql", connector_id=cid,
+        sql=sql, **kw,
+    )
+
+
+async def test_a_lookup_inherits_the_connections_audience(setup):
+    plat, cid = setup
+    defn = _lookup(plat, cid, "SELECT store_id, amount FROM sales")
+    assert defn.required_data_class is DataClass.FINANCIAL
+
+
+async def test_a_lookup_may_not_widen_the_connection_or_a_narrowed_table(setup):
+    plat, cid = setup
+    with pytest.raises(ValidationError, match="limited to financial"):
+        _lookup(plat, cid, "SELECT amount FROM sales", required_data_class=DataClass.OPERATIONAL)
+    with pytest.raises(ValidationError, match="hides audit_log"):
+        _lookup(plat, cid, "SELECT note FROM audit_log")
+    # salaries: financial connection + HR table — no single class covers both
+    with pytest.raises(ValidationError, match="ceo"):
+        _lookup(plat, cid, "SELECT full_name FROM employees")
+    # …but limited to roles cleared for both, it is allowed
+    defn = _lookup(plat, cid, "SELECT full_name FROM employees",
+                   required_data_class=DataClass.HR, required_roles=("ceo", "admin"))
+    assert defn.required_data_class is DataClass.HR
+
+
+async def test_editing_a_lookup_cannot_widen_it_either(setup):
+    plat, cid = setup
+    defn = _lookup(plat, cid, "SELECT amount FROM sales")
+    with pytest.raises(ValidationError):
+        plat.catalog.update_skill(ADMIN, defn.id, required_data_class=DataClass.OPERATIONAL)
+    with pytest.raises(ValidationError):
+        plat.catalog.update_skill(ADMIN, defn.id, sql="SELECT note FROM audit_log")

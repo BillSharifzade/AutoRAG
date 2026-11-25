@@ -41,7 +41,7 @@ from ..domain import DataClass, Principal, new_id
 from ..errors import AccessDenied, ValidationError
 from ..knowledge.ingest import IngestionService
 from ..llm.base import Generator
-from ..rbac import can_access
+from ..rbac import can_access, narrowest_cleared
 from ..skills.base import Skill, SkillResult
 from ..skills.catalog import SkillCatalog, can_author
 from ..skills.registry import SkillRegistry
@@ -476,6 +476,7 @@ def make_query_skill(spec: ConnectorSpec, connector: SqlConnector) -> Skill:
         required_data_class=DataClass(meta.get("data_class", DataClass.OPERATIONAL.value)),
         required_roles=frozenset(meta.get("required_roles", [])),
         tenant_id=spec.tenant_id,
+        label=spec.name,
     )
 
 
@@ -532,7 +533,7 @@ class DatabaseService:
         username: str = "",
         password: str = "",
         ssl: bool = False,
-        data_class: DataClass = DataClass.OPERATIONAL,
+        data_class: DataClass | None = None,
         required_roles: tuple[str, ...] = (),
         free_query: bool = True,
         knowledge: bool = True,
@@ -559,7 +560,7 @@ class DatabaseService:
         name: str,
         filename: str,
         data: bytes,
-        data_class: DataClass = DataClass.OPERATIONAL,
+        data_class: DataClass | None = None,
         required_roles: tuple[str, ...] = (),
         free_query: bool = True,
         knowledge: bool = True,
@@ -590,10 +591,14 @@ class DatabaseService:
                        free_query, knowledge, language, comment, source, extra) -> dict:
         if not name.strip():
             raise ValidationError("the database needs a name")
+        if data_class is None:
+            # Not chosen yet (the wizard asks after it has read the schema):
+            # fail closed, as documents do, until someone says who it is for.
+            data_class = narrowest_cleared(principal)
         if not can_access(principal, data_class):
             raise AccessDenied("you are not cleared for that data class and may not publish it")
         probe = ConnectorSpec(id="probe", tenant_id=principal.tenant_id, name=name, kind=kind, config=config)
-        connector = build_connector(probe)
+        connector = build_connector(probe, self._catalog.sqlite_policy)
         assert isinstance(connector, SqlConnector)
         await connector.test()
         schema = await connector.introspect()
@@ -756,7 +761,7 @@ class DatabaseService:
     def _sql_connector(self, spec: ConnectorSpec) -> SqlConnector:
         if not is_sql_kind(spec.kind):
             raise ValidationError("that connection is an API, not a database")
-        connector = build_connector(spec)
+        connector = build_connector(spec, self._catalog.sqlite_policy)
         assert isinstance(connector, SqlConnector)
         return connector
 

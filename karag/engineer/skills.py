@@ -64,6 +64,7 @@ def engineer_skills(service: CodeChangeService) -> list[Skill]:
 
     return [
         Skill(
+            category="engineer",
             name="propose_code_change",
             description=(
                 "Propose a change to KARAG's own source code. Supply the COMPLETE new "

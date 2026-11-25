@@ -182,12 +182,38 @@ async def test_run_due_processes_every_tenants_rules(platform):
     assert len(outcomes) == 2 and all(o.fired for o in outcomes)
 
 
+def _broken_rule(platform):
+    """A rule whose skill disappeared after it was made (renamed, deleted) —
+    creating a rule for a skill that does not exist is refused up front."""
+    rule = platform.alert_service.create(
+        CEO, name="Broken", skill_name="expiring_batches", interval_s=60
+    )
+    platform.registry.unregister("dusti", "expiring_batches")
+    return rule
+
+
+def test_a_rule_must_name_a_data_skill_the_creator_can_use(platform):
+    with pytest.raises(ValidationError, match="unknown skill"):
+        platform.alert_service.create(CEO, name="x", skill_name="does_not_exist")
+    with pytest.raises(ValidationError, match="output tool"):
+        platform.alert_service.create(CEO, name="x", skill_name="create_spreadsheet")
+    with pytest.raises(ValidationError, match="unknown argument"):
+        # arguments are checked against the skill's schema up front
+        platform.alert_service.create(CEO, name="x", skill_name="expiring_batches",
+                                      arguments={"nope": 1})
+
+
+def test_template_can_use_first_row_columns_and_keeps_unknown_ones():
+    rule = StoredAlertRule(id="a", tenant_id="d", name="Дефицит", skill_name="s",
+                           message_template="Ниже порога: {n} позиций ({count} строка), {oops}")
+    text = render_message(rule, {"rows": [{"n": 39}]})
+    assert "Ниже порога: 39 позиций (1 строка), {oops}" in text
+
+
 async def test_a_failing_rule_backs_off_instead_of_hammering(platform):
     notifier = CapturingNotifier()
     scheduler = _scheduler(platform, notifier)
-    rule = platform.alert_service.create(
-        CEO, name="Broken", skill_name="does_not_exist", interval_s=60
-    )
+    rule = _broken_rule(platform)
     outcome = await scheduler.run_rule(rule, force=True)
     assert outcome.error and not outcome.fired
 
@@ -199,9 +225,7 @@ async def test_a_failing_rule_backs_off_instead_of_hammering(platform):
 
 async def test_re_enabling_clears_the_backoff(platform):
     scheduler = _scheduler(platform, CapturingNotifier())
-    rule = platform.alert_service.create(
-        CEO, name="Broken", skill_name="does_not_exist", interval_s=60
-    )
+    rule = _broken_rule(platform)
     await scheduler.run_rule(rule, force=True)
     platform.alert_service.set_enabled(CEO, rule.id, False)
     revived = platform.alert_service.set_enabled(CEO, rule.id, True)

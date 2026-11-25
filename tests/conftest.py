@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
+import tempfile
+
 import pytest
 
 from karag.config import Settings
@@ -91,3 +94,22 @@ async def seeded(platform, admin):
         source_uri="hr/comp",
     )
     return platform
+
+
+# ---- SQLite sources ------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _test_databases_live_in_a_cleared_directory(monkeypatch, tmp_path_factory):
+    """Tests keep their SQLite fixtures in pytest's temp folder. Clear it the
+    way an operator clears a directory (KARAG_SQLITE_ALLOWED_DIRS) — the rest
+    of the policy (tenant scoping, the platform's own files) stays in force.
+    tests/test_sqlite_policy.py exercises the unpatched rule."""
+    import karag.factory as factory
+
+    original = factory.build_sqlite_policy
+    cleared = (str(tmp_path_factory.getbasetemp()), tempfile.gettempdir())
+
+    def with_temp(settings):
+        policy = original(settings)
+        return dataclasses.replace(policy, extra_dirs=policy.extra_dirs + cleared)
+
+    monkeypatch.setattr(factory, "build_sqlite_policy", with_temp)

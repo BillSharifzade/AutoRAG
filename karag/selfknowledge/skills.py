@@ -83,6 +83,7 @@ def platform_skills(index: CodebaseIndex) -> list[Skill]:
 
     return [
         Skill(
+            category="platform",
             name="search_codebase",
             description=(
                 "Search KARAG's own source code for a regex or literal string. Use "
@@ -107,6 +108,7 @@ def platform_skills(index: CodebaseIndex) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="platform",
             name="read_source_file",
             description=(
                 "Read one of KARAG's own source files, with line numbers. Use after "
@@ -130,6 +132,7 @@ def platform_skills(index: CodebaseIndex) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="platform",
             name="list_source_files",
             description=(
                 "List KARAG's source files, optionally under one directory. Use to "
@@ -149,6 +152,7 @@ def platform_skills(index: CodebaseIndex) -> list[Skill]:
             tenant_id="*",
         ),
         Skill(
+            category="platform",
             name="platform_handbook",
             description=(
                 "Get KARAG's platform handbook and the capability guide for the "

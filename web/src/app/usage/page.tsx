@@ -784,7 +784,7 @@ export default function UsagePage() {
                 <CardHeader
                   icon={<GaugeIcon className="size-4" />}
                   title={t("usage.budget")}
-                  sub={t(view.budget?.budget_usd != null ? "usage.budget.money.sub" : "usage.budget.sub")}
+                  sub={t(view.budget?.budget_usd != null ? "usage.budget.money.sub" : "usage.budget.none.sub")}
                 />
                 <div className="p-6 pt-4">
                   {/* the organisation's real monthly cap when one is set
@@ -804,7 +804,15 @@ export default function UsagePage() {
                       })}
                     />
                   ) : (
-                    <Speedometer fraction={view.total_tokens / TOKEN_BUDGET} />
+                    /* No cap is set: an honest empty gauge, not a made-up
+                       token budget. A platform operator sets one in Admin. */
+                    <Speedometer
+                      fraction={0}
+                      caption={t("usage.budget.none", {
+                        spent: money(view.budget?.spent_usd ?? 0),
+                        month: view.budget?.month ?? "",
+                      })}
+                    />
                   )}
                 </div>
               </Card>
