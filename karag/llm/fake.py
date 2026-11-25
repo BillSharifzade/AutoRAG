@@ -22,7 +22,6 @@ the fake uses the explicit ``key=value`` contract only so tests are exact.
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from dataclasses import dataclass
@@ -68,7 +67,10 @@ class FakeGenerator:
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
         on_delta=None,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
+        if tool_choice == "none":
+            tools = None
         response = await self._generate(system=system, messages=messages, tools=tools)
         # A streaming caller sees the answer arrive word by word, exactly as it
         # would from a real provider — so the SSE path is testable offline.
@@ -125,10 +127,17 @@ class FakeGenerator:
 
     @staticmethod
     def _pick_tool(tools: list[ToolSpec], kv: dict) -> ToolSpec | None:
-        """Pick the tool whose schema properties best match the kv keys."""
+        """Pick the tool whose schema properties best match the kv keys.
+
+        The orchestrator's own ``search_documents`` is never picked: the fake
+        already answers from the passages retrieved up front, and a ``query=``
+        in a test means a skill's query parameter.
+        """
         best: ToolSpec | None = None
         best_score = 0
         for t in tools:
+            if t.name == "search_documents":
+                continue
             props = set(t.input_schema.get("properties", {}))
             score = len(props & set(kv))
             if score > best_score:
@@ -161,12 +170,15 @@ class FakeGenerator:
 
     @staticmethod
     def _context_lines(messages: list[ChatMessage]) -> list[str]:
+        """The quoted passages, each with its marker — the fake cites every
+        passage it was given, as a real model cites what it uses."""
         lines: list[str] = []
         for m in messages:
             for ln in m.content.splitlines():
-                mo = re.match(r"\s*\[\d+\]\s*(.+)", ln)
+                mo = re.match(r"\s*(\[\d+\])\s*(.+)", ln)
                 if mo:
-                    lines.append(mo.group(1).strip())
+                    text = re.sub(r"\s*\(source: [^)]*\)\s*$", "", mo.group(2).strip())
+                    lines.append(f"{text} {mo.group(1)}")
         return lines
 
 

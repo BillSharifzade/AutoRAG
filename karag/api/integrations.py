@@ -86,6 +86,11 @@ class DbOptionsRequest(BaseModel):
     data_class: DataClass | None = None
     required_roles: list[str] | None = None
     description: str | None = None
+    # per-table audience: {"employees": "hr"}; null/"" puts a table back on
+    # the connection's own audience. Only ever narrows.
+    table_classes: dict[str, str | None] | None = None
+    # tables the assistant may never query or see
+    hidden_tables: list[str] | None = None
 
 
 def _gateway_error(exc: Exception) -> HTTPException:
@@ -260,6 +265,7 @@ def mount_integrations(app: FastAPI, plat, principal_from) -> None:
             knowledge=req.knowledge, data_class=req.data_class,
             required_roles=tuple(req.required_roles) if req.required_roles is not None else None,
             description=req.description,
+            table_classes=req.table_classes, hidden_tables=req.hidden_tables,
         )
         return spec.to_public_dict()
 

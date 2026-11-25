@@ -15,7 +15,14 @@ from karag.office.xlsx import build_xlsx
 def test_extract_txt_md_csv():
     assert extract_text("a.txt", b"hello world") == "hello world"
     assert extract_text("a.md", b"# Title\n\nbody") == "# Title\n\nbody"
-    assert "a, b" in extract_text("a.csv", b"a,b\n1,2")
+    # A header row turns every data row into self-describing "column: value"
+    # pairs, so a passage cut from the middle of a sheet still makes sense.
+    assert extract_text("a.csv", b"a,b\n1,2") == "a: 1; b: 2"
+    assert extract_text("p.csv", "товар;цена\nПарацетамол;12,5\n".encode()) == (
+        "товар: Парацетамол; цена: 12,5"
+    )
+    # no header (all numbers) -> plain comma-joined rows
+    assert extract_text("n.csv", b"1,2\n3,4") == "1, 2\n3, 4"
 
 
 def test_extract_docx_roundtrip():

@@ -14,7 +14,7 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY karag ./karag
 RUN pip install --no-cache-dir -U pip \
-    && pip install --no-cache-dir ".[api,anthropic,ollama,pgvector,mysql,secrets,ingestion]"
+    && pip install --no-cache-dir ".[api,anthropic,ollama,pgvector,mysql,secrets,ingestion,fast]"
 
 COPY scripts ./scripts
 COPY sql ./sql

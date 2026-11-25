@@ -25,6 +25,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  Wallet,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
@@ -771,6 +772,88 @@ function Alerts({
 
 /* ---------------- companies (platform operator only) ---------------- */
 
+/* A company's monthly AI budget: this month's spend against the cap, and a
+   small inline editor. An empty field removes the cap. Only a platform
+   operator sees this list at all, and the API enforces the same. */
+function BudgetEditor({
+  company,
+  onSaved,
+  onProblem,
+}: {
+  company: Tenant;
+  onSaved: () => Promise<void>;
+  onProblem: (s: string) => void;
+}) {
+  const { token } = useAuth();
+  const t = useT();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const b = company.budget;
+  const usd = (n: number) =>
+    n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
+
+  if (editing) {
+    return (
+      <form
+        className="flex shrink-0 items-center gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const raw = value.trim().replace(",", ".");
+          const next = raw === "" ? null : Number(raw);
+          if (next !== null && (!Number.isFinite(next) || next < 0)) {
+            onProblem(t("admin.budget.invalid"));
+            return;
+          }
+          setSaving(true);
+          try {
+            await api.tenants.setBudget(token, company.id, next);
+            setEditing(false);
+            await onSaved();
+          } catch (err) {
+            onProblem(errorWords((err as ApiError).message));
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Input
+          autoFocus
+          inputMode="decimal"
+          aria-label={t("admin.budget.label")}
+          placeholder={t("admin.budget.none")}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="h-8 w-32"
+        />
+        <Button type="submit" disabled={saving}>
+          {t("common.save")}
+        </Button>
+        <Button variant="ghost" type="button" onClick={() => setEditing(false)}>
+          {t("common.cancel")}
+        </Button>
+      </form>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setValue(b?.budget_usd != null ? String(b.budget_usd) : "");
+        setEditing(true);
+      }}
+      title={t("admin.budget.label")}
+      className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12.5px] text-mut transition-colors hover:border-line-strong hover:text-ink"
+    >
+      <Wallet className="size-3.5" />
+      {b?.budget_usd != null
+        ? t("admin.budget.of", { spent: usd(b.spent_usd), budget: usd(b.budget_usd) })
+        : t("admin.budget.unlimited", { spent: usd(b?.spent_usd ?? 0) })}
+    </button>
+  );
+}
+
 function Companies({
   companies,
   onRefresh,
@@ -904,6 +987,7 @@ function Companies({
                     {t("admin.companies.added", { when: whenWords(c.created_at) })}
                   </p>
                 </div>
+                <BudgetEditor company={c} onSaved={onRefresh} onProblem={onProblem} />
                 <button
                   onClick={async () => {
                     await api.tenants

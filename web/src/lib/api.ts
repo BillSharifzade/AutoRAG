@@ -145,6 +145,10 @@ export interface ConnectorMeta {
   schema_summary?: string;
   table_count?: number;
   data_class?: DataClass;
+  /** tables narrowed below the connection's audience (only ever narrower) */
+  table_classes?: Record<string, DataClass>;
+  /** tables the assistant may never query or see */
+  hidden_tables?: string[];
   required_roles?: string[];
   free_query?: boolean;
   knowledge?: boolean;
@@ -382,12 +386,23 @@ export interface AlertRule {
 
 /* ---------- tenants + accounts (§12, §14) ---------- */
 
+/** A tenant's monthly model budget and what has been spent this month (UTC). */
+export interface BudgetStatus {
+  month: string;
+  /** null = no cap */
+  budget_usd: number | null;
+  spent_usd: number;
+  remaining_usd: number | null;
+}
+
 export interface Tenant {
   id: string;
   name: string;
   active: boolean;
   default_language: Language;
   created_at: number;
+  settings?: { monthly_budget_usd?: number };
+  budget?: BudgetStatus;
 }
 
 export interface Account {
@@ -447,6 +462,7 @@ export interface UsageTotals {
   cost_usd: number;
   unpriced_models: string[];
   by_model: ModelUsage[];
+  budget: BudgetStatus | null;
   events: UsageEvent[];
 }
 
@@ -499,6 +515,8 @@ export type ChatStreamEvent =
   | { type: "status"; stage: "retrieving" | "thinking" }
   | { type: "tool"; name: string; status: "start" | "done" | "error" }
   | { type: "delta"; text: string }
+  /** a provider failed mid-answer and another starts over: drop the text so far */
+  | { type: "reset" }
   | ({ type: "done" } & ChatAskResult)
   | { type: "error"; status: number; detail: string };
 
@@ -746,6 +764,9 @@ export const api = {
         data_class?: DataClass;
         required_roles?: string[];
         description?: string;
+        /** null puts a table back on the connection's audience */
+        table_classes?: Record<string, DataClass | null>;
+        hidden_tables?: string[];
       },
     ) => request<Connector>(token, `/v1/databases/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     remove: (token: string, id: string) =>
@@ -864,6 +885,12 @@ export const api = {
       request<{ id: string; active: boolean }>(token, `/v1/tenants/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ active }),
+      }),
+    /** null removes the cap */
+    setBudget: (token: string, id: string, monthly_budget_usd: number | null) =>
+      request<{ id: string; active: boolean; budget: BudgetStatus }>(token, `/v1/tenants/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ monthly_budget_usd }),
       }),
   },
 

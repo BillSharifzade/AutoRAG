@@ -19,7 +19,13 @@ from dataclasses import dataclass
 
 # model id -> (USD per 1M input tokens, USD per 1M output tokens)
 DEFAULT_RATES: dict[str, tuple[float, float]] = {
-    # Anthropic — first-party API list prices, USD per 1M tokens (2026-06)
+    # Anthropic — first-party API list prices, USD per 1M tokens (2026-11)
+    "claude-fable-5-2": (8.00, 40.00),
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-fable-5": (10.00, 50.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-opus-5": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-7": (5.00, 25.00),
@@ -39,6 +45,25 @@ DEFAULT_RATES: dict[str, tuple[float, float]] = {
 }
 
 _PER_MILLION = 1_000_000
+
+# Cache reads cost a fraction of the input price, and the fraction depends on
+# the model: a twentieth on Opus 5.5 / Sonnet 5.5, a fortieth on Fable 5.1+,
+# a tenth on everything else. Longest prefix wins, as for rates.
+CACHE_READ_FACTORS: dict[str, float] = {
+    "claude-opus-5-5": 0.05,
+    "claude-sonnet-5-5": 0.05,
+    "claude-fable-5-1": 0.025,
+    "claude-fable-5-2": 0.025,
+    "claude-mythos-5-1": 0.025,
+    "claude-mythos-5-2": 0.025,
+}
+DEFAULT_CACHE_READ_FACTOR = 0.1
+
+
+def cache_read_factor(model: str) -> float:
+    model = model or ""
+    hits = [k for k in CACHE_READ_FACTORS if model.startswith(k)]
+    return CACHE_READ_FACTORS[max(hits, key=len)] if hits else DEFAULT_CACHE_READ_FACTOR
 
 
 @dataclass(frozen=True)

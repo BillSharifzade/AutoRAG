@@ -112,3 +112,58 @@ async def test_upsert_delete_count(store):
     n = await store.delete_document(tenant_id="t", document_id="d1")
     assert n == 2
     assert await store.count(tenant_id="t") == 0
+
+
+def _doc_chunk(cid, tenant, klass, text, vec, doc="d"):
+    return Chunk(
+        id=cid, document_id=doc, tenant_id=tenant, data_class=klass,
+        ordinal=0, text=text, title="Справочник", embedding=vec,
+    )
+
+
+async def test_keyword_search_filters_and_finds_codes(store):
+    """The table starts in the old schema (no terms column): the store adds
+    it on first use, then keyword search keeps the same security contract."""
+    from karag.knowledge.lexical import query_terms
+
+    await store.upsert([
+        _doc_chunk("code", "t", DC.OPERATIONAL, "АМК-875 Амоксиклав 875/125 мг №14", [1, 0, 0, 0]),
+        _doc_chunk("near", "t", DC.OPERATIONAL, "АМК-500 Амоксиклав 500/125 мг №20", [1, 0, 0, 0]),
+        _doc_chunk("secret", "t", DC.FINANCIAL, "АМК-875 закупочная цена 41,20", [1, 0, 0, 0]),
+        _doc_chunk("other", "evar", DC.OPERATIONAL, "АМК-875 у другого арендатора", [1, 0, 0, 0]),
+    ])
+    hits = await store.keyword_search(
+        tenant_id="t", terms=query_terms("Что за товар АМК-875?"),
+        allowed_classes=frozenset({DC.OPERATIONAL}), top_k=5,
+        query_embedding=[1, 0, 0, 0],
+    )
+    ids = [h.chunk.id for h in hits]
+    assert ids[0] == "code"  # the exact code outranks its look-alike
+    assert "secret" not in ids and "other" not in ids
+    assert hits[0].lexical_score > 0 and hits[0].dense_score is not None
+    assert await store.keyword_search(
+        tenant_id="t", terms=["амк-875"], allowed_classes=frozenset(), top_k=5
+    ) == []
+
+
+async def test_existing_rows_get_terms_backfilled():
+    """Rows written before the keyword index existed become searchable."""
+    import psycopg
+
+    from karag.knowledge.lexical import query_terms
+    from karag.vectorstore.pgvector import PgVectorStore
+
+    _reset_schema()
+    with psycopg.connect(DSN) as conn:  # type: ignore[arg-type]
+        conn.execute(
+            "INSERT INTO karag_chunks (id, document_id, tenant_id, data_class, ordinal,"
+            " title, text, embedding) VALUES ('old', 'd', 't', 'public', 0, 'Правила',"
+            " 'Возврат денег на карту в течение 5 рабочих дней', '[1,0,0,0]')"
+        )
+        conn.commit()
+    store = PgVectorStore(DSN)
+    hits = await store.keyword_search(
+        tenant_id="t", terms=query_terms("возврат денег"),
+        allowed_classes=frozenset({DC.PUBLIC}), top_k=3,
+    )
+    assert [h.chunk.id for h in hits] == ["old"]

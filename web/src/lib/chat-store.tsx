@@ -186,6 +186,9 @@ export function useChatEngine(run: Runner, initial: Turn[] = []): ChatEngine {
           }));
         } else if (event.type === "delta") {
           patchLast((l) => ({ ...l, text: l.text + event.text, status: undefined }));
+        } else if (event.type === "reset") {
+          // the model in use failed mid-answer; the fallback starts over
+          patchLast((l) => ({ ...l, text: "", status: { stage: "thinking" } }));
         }
       };
 

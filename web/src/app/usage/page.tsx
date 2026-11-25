@@ -101,6 +101,8 @@ function deriveView(usage: UsageTotals, key: RangeKey): UsageTotals {
     cost_usd: usage.cost_usd * share,
     unpriced_models: usage.unpriced_models,
     by_model: usage.by_model,
+    // the budget is a calendar-month figure, whatever range is on screen
+    budget: usage.budget,
     events,
   };
 }
@@ -141,7 +143,7 @@ function polar(cx: number, cy: number, r: number, deg: number) {
   return { x: cx + r * Math.sin(rad), y: cy - r * Math.cos(rad) };
 }
 
-function Speedometer({ fraction }: { fraction: number }) {
+function Speedometer({ fraction, caption }: { fraction: number; caption?: string }) {
   const t = useT();
   const lang = useLang();
   const pct = Math.min(Math.max(fraction, 0), 1);
@@ -254,7 +256,7 @@ function Speedometer({ fraction }: { fraction: number }) {
         {pctText}
       </motion.p>
       <p className="mt-1.5 text-[12.5px] text-mut">
-        {t("usage.ofBudget", { n: TOKEN_BUDGET.toLocaleString(lang) })}
+        {caption ?? t("usage.ofBudget", { n: TOKEN_BUDGET.toLocaleString(lang) })}
       </p>
     </div>
   );
@@ -782,10 +784,28 @@ export default function UsagePage() {
                 <CardHeader
                   icon={<GaugeIcon className="size-4" />}
                   title={t("usage.budget")}
-                  sub={t("usage.budget.sub")}
+                  sub={t(view.budget?.budget_usd != null ? "usage.budget.money.sub" : "usage.budget.sub")}
                 />
                 <div className="p-6 pt-4">
-                  <Speedometer fraction={view.total_tokens / TOKEN_BUDGET} />
+                  {/* the organisation's real monthly cap when one is set
+                      (spend this month, whatever range is selected above);
+                      otherwise the token meter as before */}
+                  {view.budget?.budget_usd != null ? (
+                    <Speedometer
+                      fraction={
+                        view.budget.budget_usd > 0
+                          ? view.budget.spent_usd / view.budget.budget_usd
+                          : 1
+                      }
+                      caption={t("usage.budget.money", {
+                        spent: money(view.budget.spent_usd),
+                        budget: money(view.budget.budget_usd),
+                        month: view.budget.month,
+                      })}
+                    />
+                  ) : (
+                    <Speedometer fraction={view.total_tokens / TOKEN_BUDGET} />
+                  )}
                 </div>
               </Card>
             </motion.div>

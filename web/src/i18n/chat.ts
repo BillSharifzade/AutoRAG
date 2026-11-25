@@ -25,6 +25,7 @@ export const chat: Dictionary = {
     "chat.sug.figure.query": "What was our Q2 revenue and net profit?",
 
     "chat.status.retrieving": "Searching documents…",
+    "chat.status.search": "Looking further in the documents…",
     "chat.status.thinking": "Thinking…",
     "chat.status.tool": "Running {skill}…",
     "chat.stopped": "Stopped",
@@ -105,6 +106,7 @@ export const chat: Dictionary = {
     "chat.sug.figure.query": "Какими были выручка и чистая прибыль за второй квартал?",
 
     "chat.status.retrieving": "Ищу в документах…",
+    "chat.status.search": "Ищу дальше в документах…",
     "chat.status.thinking": "Думаю…",
     "chat.status.tool": "Выполняю {skill}…",
     "chat.stopped": "Остановлено",

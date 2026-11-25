@@ -135,6 +135,8 @@ export const common: Dictionary = {
     "err.large": "That file is too big. Try one under 20 MB.",
     "err.network": "Can't reach the server. Check your connection and try again.",
     "err.model": "The model could not be reached. Please try again in a moment.",
+    "err.rate": "That's a lot of questions in a minute. Wait a few seconds and try again.",
+    "err.budget": "This month's AI budget for your organisation is used up. An administrator can raise it.",
   },
   ru: {
     "app.name": "KARAG",
@@ -268,5 +270,7 @@ export const common: Dictionary = {
     "err.large": "Файл слишком большой. Попробуйте файл меньше 20 МБ.",
     "err.network": "Нет связи с сервером. Проверьте подключение и попробуйте снова.",
     "err.model": "Модель сейчас недоступна. Попробуйте ещё раз через минуту.",
+    "err.rate": "Слишком много вопросов за минуту. Подождите несколько секунд и попробуйте снова.",
+    "err.budget": "Месячный бюджет на ИИ для вашей организации исчерпан. Его может увеличить администратор.",
   },
 };

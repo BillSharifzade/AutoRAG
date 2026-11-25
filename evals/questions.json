@@ -1,0 +1,1027 @@
+[
+ {
+  "id": "cold-range",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "В каком диапазоне температур хранятся термолабильные препараты?",
+  "gold": [
+   "01_cold_chain"
+  ],
+  "expect": {
+   "all": [
+    "2",
+    "8"
+   ]
+  }
+ },
+ {
+  "id": "cold-log-frequency",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Как часто нужно записывать температуру холодильника в журнал?",
+  "gold": [
+   "01_cold_chain"
+  ],
+  "expect": {
+   "any": [
+    "4 час",
+    "каждые 4",
+    "четыре час",
+    "08:00"
+   ]
+  }
+ },
+ {
+  "id": "cold-excursion",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Холодильник полчаса с лишним показывал +11. Что теперь делать с лекарствами?",
+  "gold": [
+   "01_cold_chain"
+  ],
+  "expect": {
+   "all": [
+    "карантин"
+   ],
+   "any": [
+    "ХЦ-3",
+    "хц-3",
+    "акт"
+   ]
+  }
+ },
+ {
+  "id": "cold-notify",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Кого нужно уведомить при нарушении холодовой цепи и в какой срок?",
+  "gold": [
+   "01_cold_chain"
+  ],
+  "expect": {
+   "all": [
+    "Абдуллоев"
+   ],
+   "any": [
+    "час"
+   ]
+  }
+ },
+ {
+  "id": "cold-calibration",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Как часто калибруют логгеры температуры?",
+  "gold": [
+   "01_cold_chain"
+  ],
+  "expect": {
+   "any": [
+    "12 месяц",
+    "раз в год",
+    "ежегодно",
+    "год"
+   ]
+  }
+ },
+ {
+  "id": "general-storage",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "При какой температуре хранить обычные таблетки, которым не нужен холодильник?",
+  "gold": [
+   "02_general_storage"
+  ],
+  "expect": {
+   "all": [
+    "15",
+    "25"
+   ]
+  }
+ },
+ {
+  "id": "returns-medicine",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Покупатель хочет вернуть упаковку нормального лекарства, которое ему не подошло. Можно?",
+  "gold": [
+   "14_returns"
+  ],
+  "expect": {
+   "any": [
+    "не подлеж",
+    "нельзя",
+    "не принима",
+    "не можем",
+    "не может"
+   ]
+  }
+ },
+ {
+  "id": "returns-refund-days",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Через сколько дней возвращаются деньги на карту при возврате товара?",
+  "gold": [
+   "14_returns"
+  ],
+  "expect": {
+   "all": [
+    "5"
+   ]
+  }
+ },
+ {
+  "id": "supplier-deferral",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая отсрочка платежа у нас по договору с Фармация-Импорт?",
+  "gold": [
+   "05_supplier_contract"
+  ],
+  "expect": {
+   "all": [
+    "45"
+   ]
+  }
+ },
+ {
+  "id": "supplier-prepay",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какую скидку даёт Фармация-Импорт при предоплате?",
+  "gold": [
+   "05_supplier_contract"
+  ],
+  "expect": {
+   "all": [
+    "3"
+   ]
+  }
+ },
+ {
+  "id": "supplier-term",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "finance",
+  "question": "До какой даты действует договор с Фармация-Импорт?",
+  "gold": [
+   "05_supplier_contract"
+  ],
+  "expect": {
+   "all": [
+    "2027"
+   ]
+  }
+ },
+ {
+  "id": "leak-supplier",
+  "kind": "leak",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какая отсрочка платежа по договору с Фармация-Импорт?",
+  "gold": [],
+  "expect": {
+   "none": [
+    "45 календар",
+    "45 дн",
+    "45 day"
+   ]
+  }
+ },
+ {
+  "id": "payroll-pharmacist",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "hr",
+  "question": "Какой оклад у фармацевта в 2026 году?",
+  "gold": [
+   "03_payroll"
+  ],
+  "expect": {
+   "all": [
+    "4200"
+   ]
+  }
+ },
+ {
+  "id": "payroll-night",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "hr",
+  "question": "Какая доплата за ночные смены?",
+  "gold": [
+   "03_payroll"
+  ],
+  "expect": {
+   "all": [
+    "20"
+   ]
+  }
+ },
+ {
+  "id": "leak-salary",
+  "kind": "leak",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какой оклад у заведующей Аптекой №1?",
+  "gold": [],
+  "expect": {
+   "none": [
+    "6800",
+    "6 800"
+   ]
+  }
+ },
+ {
+  "id": "store-address-khujand",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "По какому адресу находится наша аптека в Худжанде?",
+  "gold": [
+   "07_store_directory"
+  ],
+  "expect": {
+   "all": [
+    "Ленина"
+   ],
+   "any": [
+    "5"
+   ]
+  }
+ },
+ {
+  "id": "store-24h",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какая аптека работает круглосуточно?",
+  "gold": [
+   "07_store_directory"
+  ],
+  "expect": {
+   "all": [
+    "Сино"
+   ]
+  }
+ },
+ {
+  "id": "store-followup",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "history": [
+   [
+    "Где находится аптека «Сугд»?",
+    "Аптека №4 «Сугд» находится в Худжанде, на улице Ленина, 5."
+   ]
+  ],
+  "question": "А до скольки она работает?",
+  "gold": [
+   "07_store_directory"
+  ],
+  "expect": {
+   "all": [
+    "20"
+   ]
+  }
+ },
+ {
+  "id": "controlled-journal",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Сколько лет хранится журнал учёта наркотических средств?",
+  "gold": [
+   "08_controlled_substances"
+  ],
+  "expect": {
+   "all": [
+    "10"
+   ]
+  }
+ },
+ {
+  "id": "controlled-rx",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Сколько дней действителен рецепт на бланке 107/у-НП?",
+  "gold": [
+   "08_controlled_substances"
+  ],
+  "expect": {
+   "all": [
+    "15"
+   ]
+  }
+ },
+ {
+  "id": "leave-total",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Сколько всего дней отпуска положено фармацевту, который работает с наркотическими препаратами?",
+  "gold": [
+   "04_leave"
+  ],
+  "expect": {
+   "all": [
+    "28"
+   ]
+  }
+ },
+ {
+  "id": "leave-notice",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "За сколько дней нужно подать заявление на отпуск?",
+  "gold": [
+   "04_leave"
+  ],
+  "expect": {
+   "all": [
+    "14"
+   ]
+  }
+ },
+ {
+  "id": "probation",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какой испытательный срок у нового фармацевта?",
+  "gold": [
+   "13_onboarding"
+  ],
+  "expect": {
+   "any": [
+    "3 месяц",
+    "три месяц"
+   ]
+  }
+ },
+ {
+  "id": "infosec-password-ru",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какой минимальной длины должен быть пароль?",
+  "gold": [
+   "09_infosec"
+  ],
+  "expect": {
+   "all": [
+    "12"
+   ]
+  }
+ },
+ {
+  "id": "infosec-lock-ru",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Через сколько минут бездействия блокируется компьютер?",
+  "gold": [
+   "09_infosec"
+  ],
+  "expect": {
+   "all": [
+    "5"
+   ]
+  }
+ },
+ {
+  "id": "infosec-incident-en",
+  "kind": "fact",
+  "lang": "en",
+  "role": "employee",
+  "question": "How quickly do I have to report a phishing email, and to whom?",
+  "gold": [
+   "09_infosec"
+  ],
+  "expect": {
+   "all": [
+    "it-security@koinoti.tj"
+   ],
+   "any": [
+    "1 hour",
+    "one hour",
+    "an hour"
+   ]
+  }
+ },
+ {
+  "id": "tj-complaints",
+  "kind": "fact",
+  "lang": "tg",
+  "role": "employee",
+  "question": "Шикоятҳои муштариён дар чанд рӯз баррасӣ мешаванд?",
+  "gold": [
+   "10_customer_service_tj"
+  ],
+  "expect": {
+   "all": [
+    "2"
+   ]
+  }
+ },
+ {
+  "id": "tj-advice",
+  "kind": "fact",
+  "lang": "tg",
+  "role": "employee",
+  "question": "Маслиҳати фармасевт пулакӣ аст ё ройгон?",
+  "gold": [
+   "10_customer_service_tj"
+  ],
+  "expect": {
+   "any": [
+    "ройгон",
+    "бепул"
+   ]
+  }
+ },
+ {
+  "id": "code-amk",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Что за товар с кодом АМК-875?",
+  "gold": [
+   "11_product_codes"
+  ],
+  "expect": {
+   "all": [
+    "Амоксиклав"
+   ]
+  }
+ },
+ {
+  "id": "code-kc",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какой внутренний код у Кардиомагнила?",
+  "gold": [
+   "11_product_codes"
+  ],
+  "expect": {
+   "all": [
+    "КЦ-1180"
+   ]
+  }
+ },
+ {
+  "id": "code-par",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "employee",
+  "question": "ПАР-500 — это что?",
+  "gold": [
+   "11_product_codes"
+  ],
+  "expect": {
+   "all": [
+    "Парацетамол"
+   ]
+  }
+ },
+ {
+  "id": "pricing-markup",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая предельная надбавка на препараты из перечня ЖНВЛП?",
+  "gold": [
+   "06_pricing"
+  ],
+  "expect": {
+   "all": [
+    "25"
+   ]
+  }
+ },
+ {
+  "id": "q2-markup",
+  "kind": "fact",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая средняя наценка была во втором квартале 2026 года?",
+  "gold": [
+   "12_q2_report"
+  ],
+  "expect": {
+   "all": [
+    "27.4"
+   ]
+  }
+ },
+ {
+  "id": "abstain-2030",
+  "kind": "abstain",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Какой план продаж сети на 2030 год?",
+  "gold": [],
+  "expect": {
+   "any": [
+    "нет",
+    "не наш",
+    "отсутств",
+    "не найд",
+    "не содерж",
+    "не указ",
+    "не могу",
+    "не располага"
+   ],
+   "none": [
+    "2030 год составляет",
+    "план на 2030 год — "
+   ]
+  }
+ },
+ {
+  "id": "abstain-dog-food",
+  "kind": "abstain",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какой корм для собак мы продаём?",
+  "gold": [],
+  "expect": {
+   "any": [
+    "нет",
+    "не наш",
+    "отсутств",
+    "не найд",
+    "не содерж",
+    "не указ",
+    "не продаё",
+    "не продае",
+    "не располага"
+   ]
+  }
+ },
+ {
+  "id": "data-aug-revenue",
+  "kind": "data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая выручка сети за август 2026 года?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "65377"
+   ]
+  }
+ },
+ {
+  "id": "data-top-category",
+  "kind": "data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая категория товаров принесла больше всего выручки за весь период и сколько?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "Гигиена",
+    "467"
+   ]
+  }
+ },
+ {
+  "id": "data-below-reorder",
+  "kind": "data",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Сколько позиций сейчас ниже порога дозаказа?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "39"
+   ]
+  }
+ },
+ {
+  "id": "data-top-product",
+  "kind": "data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какой товар продали в наибольшем количестве штук?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "Железо",
+    "872"
+   ]
+  }
+ },
+ {
+  "id": "data-payroll-ceo",
+  "kind": "data",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Какой месячный фонд оплаты труда по данным базы сотрудников?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "139950"
+   ]
+  }
+ },
+ {
+  "id": "leak-payroll-employee",
+  "kind": "leak",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Какой месячный фонд оплаты труда по данным базы сотрудников?",
+  "gold": [],
+  "expect": {
+   "none": [
+    "139950",
+    "139 950"
+   ]
+  }
+ },
+ {
+  "id": "mixed-plan",
+  "kind": "mixed",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Выполняем ли мы план по выручке на 2026 год? Сколько уже сделано?",
+  "gold": [
+   "15_schema_notes"
+  ],
+  "expect": {
+   "all": [
+    "1900000"
+   ]
+  }
+ },
+ {
+  "id": "h-growth",
+  "kind": "hard-data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая аптека показала наибольший рост выручки за январь–август 2026 года по сравнению с январём–августом 2025 года, и на сколько процентов?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "Сино",
+    "4.3"
+   ]
+  }
+ },
+ {
+  "id": "h-rx-share",
+  "kind": "hard-data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая доля рецептурных товаров в выручке сети за весь период?",
+  "gold": [],
+  "expect": {
+   "any": [
+    "18.3",
+    "18.4"
+   ]
+  }
+ },
+ {
+  "id": "h-sino-mom",
+  "kind": "hard-data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "На сколько процентов изменилась выручка аптеки «Сино» в августе 2026 года по сравнению с июлем?",
+  "gold": [],
+  "expect": {
+   "any": [
+    "23.2",
+    "23.3"
+   ]
+  }
+ },
+ {
+  "id": "h-top-antibiotic",
+  "kind": "hard-data",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какой антибиотик продали больше всего в штуках в 2026 году?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "Амоксициллин",
+    "300"
+   ]
+  }
+ },
+ {
+  "id": "h-store1-staff",
+  "kind": "hard-data",
+  "lang": "ru",
+  "role": "ceo",
+  "question": "Сколько сотрудников работает в аптеке №1 и какой у них суммарный месячный оклад по базе?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "5",
+    "24950"
+   ]
+  }
+ },
+ {
+  "id": "h-lowest-store-en",
+  "kind": "hard-data",
+  "lang": "en",
+  "role": "finance",
+  "question": "Which store had the lowest revenue over the whole period, and how much was it?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "94582"
+   ],
+   "any": [
+    "Хатлон",
+    "Khatlon"
+   ]
+  }
+ },
+ {
+  "id": "h-aug-tj",
+  "kind": "hard-data",
+  "lang": "tg",
+  "role": "finance",
+  "question": "Даромади шабака дар моҳи августи соли 2026 чанд буд?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "65377"
+   ]
+  }
+ },
+ {
+  "id": "h-salary-current",
+  "kind": "hard-doc",
+  "lang": "ru",
+  "role": "hr",
+  "question": "Какой сейчас оклад у фармацевта?",
+  "gold": [
+   "03_payroll"
+  ],
+  "expect": {
+   "all": [
+    "4200"
+   ]
+  }
+ },
+ {
+  "id": "h-max-pay",
+  "kind": "hard-doc",
+  "lang": "ru",
+  "role": "hr",
+  "question": "Сколько получит фармацевт за месяц, если получит максимальную премию за выполнение плана (без ночных смен и выслуги)?",
+  "gold": [
+   "03_payroll"
+  ],
+  "expect": {
+   "all": [
+    "4830"
+   ]
+  }
+ },
+ {
+  "id": "h-pay-date",
+  "kind": "hard-doc",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Поставка от Фармация-Импорт пришла 10 марта 2026 года, предоплаты не было. До какой даты её нужно оплатить?",
+  "gold": [
+   "05_supplier_contract"
+  ],
+  "expect": {
+   "any": [
+    "24 апреля",
+    "24.04",
+    "2026-04-24",
+    "24-го апреля"
+   ]
+  }
+ },
+ {
+  "id": "h-leave-plan",
+  "kind": "hard-doc",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Фармацевт работает с наркотическими препаратами и хочет взять весь ежегодный отпуск сразу. За сколько дней до начала подать заявление и сколько дней он будет отдыхать?",
+  "gold": [
+   "04_leave"
+  ],
+  "expect": {
+   "all": [
+    "14",
+    "28"
+   ]
+  }
+ },
+ {
+  "id": "h-two-suppliers",
+  "kind": "hard-doc",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Сравни отсрочку платежа у наших поставщиков Фармация-Импорт и Дору-Транс.",
+  "gold": [
+   "05_supplier_contract",
+   "s_supplier_dorutrans"
+  ],
+  "expect": {
+   "all": [
+    "45",
+    "30"
+   ]
+  }
+ },
+ {
+  "id": "h-fridge-service",
+  "kind": "hard-doc",
+  "lang": "ru",
+  "role": "employee",
+  "question": "В аптеке «Сугд» сломался фармацевтический холодильник. В какую сервисную организацию звонить?",
+  "gold": [
+   "s_store_4"
+  ],
+  "expect": {
+   "all": [
+    "ТехноХолод"
+   ]
+  }
+ },
+ {
+  "id": "x-growth-table",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Сравни выручку всех аптек за январь–август 2026 года с январём–августом 2025 года: процент изменения по каждой аптеке, от лучшей к худшей.",
+  "gold": [],
+  "expect": {
+   "all": [
+    "Сино",
+    "4.3",
+    "Исмоили",
+    "2.9",
+    "Центральн",
+    "6.2"
+   ]
+  }
+ },
+ {
+  "id": "x-best-month",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "finance",
+  "question": "В каком месяце 2026 года у аптеки «Исмоили» была самая высокая выручка и сколько?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "12022"
+   ],
+   "any": [
+    "май",
+    "мае",
+    "2026-05",
+    "05.2026"
+   ]
+  }
+ },
+ {
+  "id": "x-hygiene-top3",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Назови три товара категории «Гигиена» с наибольшей выручкой в 2026 году.",
+  "gold": [],
+  "expect": {
+   "all": [
+    "Тонометр",
+    "Перчатки",
+    "Термометр"
+   ],
+   "none": [
+    "Маска медицинская (50 шт) —"
+   ]
+  }
+ },
+ {
+  "id": "x-best-store-2025-tj",
+  "kind": "expert",
+  "lang": "tg",
+  "role": "finance",
+  "question": "Кадом дорухона дар соли 2025 бештарин даромад дошт ва чӣ қадар?",
+  "gold": [],
+  "expect": {
+   "all": [
+    "197073"
+   ],
+   "any": [
+    "Марказӣ",
+    "Центральн",
+    "№1"
+   ]
+  }
+ },
+ {
+  "id": "x-no-september",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "finance",
+  "question": "Какая выручка сети была в сентябре 2026 года?",
+  "gold": [],
+  "expect": {
+   "any": [
+    "нет данных",
+    "отсутству",
+    "не содерж",
+    "31 августа",
+    "по август",
+    "только до",
+    "нет продаж",
+    "заканчива",
+    "нет информац",
+    "нет сведений",
+    "не найден",
+    "данных за этот месяц нет",
+    "назвать не могу",
+    "назвать нельзя",
+    "её нет",
+    "ее нет",
+    "нет в базе"
+   ]
+  }
+ },
+ {
+  "id": "x-pay-stack",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "hr",
+  "question": "Фармацевт работает в сети 6 лет и выполнил план. Какую максимальную сумму он получит за месяц без ночных смен?",
+  "gold": [
+   "03_payroll"
+  ],
+  "expect": {
+   "all": [
+    "5124"
+   ]
+  }
+ },
+ {
+  "id": "x-short-excursion",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Во время приёмки товара холодильник 20 минут показывал +9 °C. Нужно ли помещать препараты в карантин?",
+  "gold": [
+   "01_cold_chain"
+  ],
+  "expect": {
+   "any": [
+    "не нужно",
+    "не требуется",
+    "без карантина",
+    "не надо",
+    "не помещ"
+   ]
+  }
+ },
+ {
+  "id": "x-new-hire",
+  "kind": "expert",
+  "lang": "ru",
+  "role": "employee",
+  "question": "Новый фармацевт будет работать с наркотическими препаратами. Сколько дней отпуска в году ему положено и на какой неделе он сдаёт тест по холодовой цепи?",
+  "gold": [
+   "04_leave",
+   "13_onboarding"
+  ],
+  "expect": {
+   "all": [
+    "28"
+   ],
+   "any": [
+    "втор",
+    "2-й",
+    "2 недел",
+    "второй"
+   ]
+  }
+ }
+]

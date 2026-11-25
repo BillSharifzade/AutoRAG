@@ -85,12 +85,21 @@ class Chunk:
     title: str
     source_uri: str | None = None
     embedding: Vector | None = None
+    # the section the passage sits under ("Хранение › Температурный режим");
+    # indexed with the text and shown to the model next to the title
+    heading: str = ""
 
 
 @dataclass
 class RetrievedChunk:
     chunk: Chunk
+    # the ranking score of whichever search produced it (cosine for vector
+    # search, BM25 for keyword search, a fused rank score after fusion)
     score: float
+    # cosine similarity to the question, when known
+    dense_score: float | None = None
+    # BM25 keyword score, when the passage matched the question's words
+    lexical_score: float | None = None
 
 
 @dataclass

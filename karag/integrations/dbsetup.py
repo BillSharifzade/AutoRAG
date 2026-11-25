@@ -332,24 +332,129 @@ def render_schema_doc(name: str, schema: dict, report: dict) -> str:
 # ------------------------------------------------------------ query skill
 
 
+# A schema this small, with every table open to everyone who sees the skill,
+# rides inline in the tool description (no extra round-trip). Anything larger
+# or narrowed per table is fetched on demand, filtered for the caller.
+INLINE_SCHEMA_MAX = 2500
+
+# Functions that run SQL handed to them as a string, or read the server's
+# files: a forbidden table could be reached without its name ever appearing
+# as an identifier, so they are refused outright.
+_FORBIDDEN_FUNCTIONS = frozenset({
+    "query_to_xml", "query_to_xml_and_xmlschema", "query_to_xmlschema",
+    "cursor_to_xml", "cursor_to_xmlschema", "table_to_xml", "table_to_xmlschema",
+    "table_to_xml_and_xmlschema", "schema_to_xml", "schema_to_xmlschema",
+    "schema_to_xml_and_xmlschema", "database_to_xml", "database_to_xmlschema",
+    "database_to_xml_and_xmlschema", "dblink", "dblink_exec", "dblink_open",
+    "dblink_fetch", "pg_read_file", "pg_read_binary_file", "pg_ls_dir", "pg_stat_file",
+    "lo_import", "lo_export", "lo_get", "lo_open", "load_file", "load_extension",
+})
+
+_SQL_LITERALS = re.compile(
+    r"--[^\n]*|/\*.*?\*/|\$([A-Za-z_]*)\$.*?\$\1\$|'(?:[^']|'')*'",
+    re.DOTALL,
+)
+_SQL_IDENT = re.compile(r'"((?:[^"]|"")+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_\u0400-\u04ff][\w$\u0400-\u04ff]*)')
+_SUMMARY_TABLE = re.compile(r"^([^\s(]+)\(")
+
+
+def sql_identifiers(sql: str) -> list[str]:
+    """Every identifier in a statement, lower-cased, literals and comments
+    removed. Quoted forms ("Payroll", `payroll`, [payroll]) count too, and a
+    qualified name contributes each of its parts."""
+    bare = _SQL_LITERALS.sub(" ", sql)
+    out: list[str] = []
+    for m in _SQL_IDENT.finditer(bare):
+        name = next(g for g in m.groups() if g is not None)
+        out.append(name.replace('""', '"').lower())
+    return out
+
+
+def table_classes(meta: dict) -> dict[str, DataClass]:
+    out: dict[str, DataClass] = {}
+    for table, klass in (meta.get("table_classes") or {}).items():
+        try:
+            out[str(table).lower()] = DataClass(klass)
+        except ValueError:
+            out[str(table).lower()] = DataClass.most_restrictive()  # fail closed
+    return out
+
+
+def restricted_tables(meta: dict, principal: Principal) -> set[str]:
+    """Tables of this database the caller may not query: hidden ones, and
+    those whose own audience the caller is not cleared for."""
+    blocked = {str(t).lower() for t in meta.get("hidden_tables") or []}
+    for table, klass in table_classes(meta).items():
+        if not can_access(principal, klass):
+            blocked.add(table)
+    return blocked
+
+
+def check_query(sql: str, blocked: set[str]) -> None:
+    idents = sql_identifiers(sql)
+    calls = set(re.findall(r"([A-Za-z_][\w]*)\s*\(", _SQL_LITERALS.sub(" ", sql)))
+    bad_fn = sorted(f for f in calls if f.lower() in _FORBIDDEN_FUNCTIONS)
+    if bad_fn:
+        raise AccessDenied(f"function {bad_fn[0]}() is not allowed in assistant queries")
+    hit = sorted({i for i in idents if i in blocked})
+    if hit:
+        raise AccessDenied(
+            f"table {hit[0]} is not available to you; use only the tables listed in the schema"
+        )
+
+
+def filter_summary(summary: str, blocked: set[str]) -> str:
+    if not blocked:
+        return summary
+    keep = []
+    for line in summary.splitlines():
+        m = _SUMMARY_TABLE.match(line)
+        name = m.group(1).lower() if m else ""
+        if name and (name in blocked or name.rsplit(".", 1)[-1] in blocked):
+            continue
+        keep.append(line)
+    return "\n".join(keep)
+
+
 def make_query_skill(spec: ConnectorSpec, connector: SqlConnector) -> Skill:
-    """The assistant's own read-only window on a connected database."""
+    """The assistant's own read-only window on a connected database.
+
+    Access has two levels. The connection's audience decides who is offered
+    the skill at all; a table may additionally be given a narrower audience
+    (or hidden), and a query naming a table the caller is not cleared for is
+    refused before it runs. Per-table settings only ever narrow.
+    """
     meta = spec.metadata
     summary = meta.get("schema_summary", "")
+    narrowed = bool(meta.get("table_classes") or meta.get("hidden_tables"))
+    inline = not narrowed and len(summary) <= INLINE_SCHEMA_MAX
+    if inline:
+        how = f"Tables and columns:\n{summary}"
+    else:
+        how = (
+            "Call it first WITHOUT `sql` to get the tables and columns you may "
+            "use, then call it again with your SELECT."
+        )
     description = (
         f"Run a read-only SQL SELECT on the database '{spec.name}' "
         f"({connector.backend}). {meta.get('description', '')} "
         "Use it when a question needs figures from this database. Write standard "
-        "SQL for this backend, one SELECT statement, with a LIMIT. Tables and "
-        f"columns:\n{summary}"
+        "SQL for this backend, one SELECT statement, with a LIMIT. " + how
     )[:8000]
 
     async def handler(principal: Principal, args: dict) -> SkillResult:
-        sql = str(args.get("sql", ""))
+        blocked = restricted_tables(meta, principal)
+        sql = str(args.get("sql") or "").strip()
+        if not sql:
+            return SkillResult(data={
+                "schema": filter_summary(summary, blocked),
+                "note": "Write one read-only SELECT against these tables only.",
+            }, query_shown=None)
+        check_query(sql, blocked)
         rows = await connector.query(sql, {}, row_limit=QUERY_ROW_LIMIT)
         return SkillResult(
             data={"rows": rows, "count": len(rows), "limit": QUERY_ROW_LIMIT},
-            query_shown=sql.strip(),
+            query_shown=sql,
         )
 
     return Skill(
@@ -358,10 +463,13 @@ def make_query_skill(spec: ConnectorSpec, connector: SqlConnector) -> Skill:
         input_schema={
             "type": "object",
             "properties": {
-                "sql": {"type": "string", "description": "One read-only SELECT statement."},
+                "sql": {
+                    "type": "string",
+                    "description": "One read-only SELECT statement. Leave it out to list the tables.",
+                },
                 "purpose": {"type": "string", "description": "What the query is for, in a few words."},
             },
-            "required": ["sql"],
+            "required": [] if not inline else ["sql"],
             "additionalProperties": False,
         },
         handler=handler,
@@ -552,8 +660,28 @@ class DatabaseService:
                           free_query: bool | None = None, knowledge: bool | None = None,
                           data_class: DataClass | None = None,
                           required_roles: tuple[str, ...] | None = None,
-                          description: str | None = None) -> ConnectorSpec:
+                          description: str | None = None,
+                          table_classes: dict[str, str | None] | None = None,
+                          hidden_tables: list[str] | None = None) -> ConnectorSpec:
         spec = self._get(principal, connector_id)
+        rewrite_doc = False
+        if table_classes is not None:
+            cleaned: dict[str, str] = {}
+            for table, klass in table_classes.items():
+                if not klass:
+                    continue  # back to the connection's own audience
+                try:
+                    k = DataClass(klass)
+                except ValueError as exc:
+                    raise ValidationError(f"unknown audience {klass!r} for table {table}") from exc
+                if not can_access(principal, k):
+                    raise AccessDenied("you are not cleared for that data class")
+                cleaned[str(table).lower()] = k.value
+            spec.metadata["table_classes"] = cleaned
+            rewrite_doc = True
+        if hidden_tables is not None:
+            spec.metadata["hidden_tables"] = sorted({str(t).lower() for t in hidden_tables if t})
+            rewrite_doc = True
         if name is not None and name.strip():
             spec.name = name.strip()
         if data_class is not None:
@@ -566,6 +694,13 @@ class DatabaseService:
             spec.metadata["description"] = description.strip()
         if free_query is not None:
             spec.metadata["free_query"] = bool(free_query)
+        if rewrite_doc and knowledge is None and spec.metadata.get("knowledge") \
+                and spec.metadata.get("document_id") and is_sql_kind(spec.kind):
+            # The description document must stop showing what was narrowed.
+            await self._vectors.delete_document(
+                tenant_id=spec.tenant_id, document_id=spec.metadata["document_id"])
+            spec.metadata["document_id"] = ""
+            knowledge = True
         if knowledge is not None:
             spec.metadata["knowledge"] = bool(knowledge)
             if not knowledge and spec.metadata.get("document_id"):
@@ -626,6 +761,15 @@ class DatabaseService:
         return connector
 
     async def _write_doc(self, spec: ConnectorSpec, schema: dict, report: dict) -> None:
+        # The description document carries the connection's audience, so a
+        # table narrowed below it (or hidden) is left out entirely — its
+        # example row could be a salary.
+        narrowed = {str(t).lower() for t in spec.metadata.get("hidden_tables") or []}
+        narrowed |= set(table_classes(spec.metadata))
+        if narrowed:
+            schema = {**schema, "tables": [
+                t for t in schema.get("tables", []) if t["name"].lower() not in narrowed
+            ]}
         text = render_schema_doc(spec.name, schema, report)
         doc = await self._ingestion.ingest_document(
             Principal(spec.tenant_id, "system:database", ("admin",)),

@@ -384,9 +384,12 @@ async def test_step_exhaustion_ends_with_an_answer_not_a_refusal(plat):
         required_data_class=DataClass.PUBLIC, tenant_id="*",
     ))
 
+    offered: list = []
+
     class Greedy(FakeGenerator):
         async def generate(self, *, system, messages, tools=None, **kw):
-            if tools:  # keeps exploring as long as tools are offered
+            offered.append([t.name for t in tools or []])
+            if kw.get("tool_choice") != "none":  # keeps exploring while allowed
                 return LLMResponse(tool_calls=[ToolCall("c", "peek", {})], stop_reason="tool_use")
             assert messages[-1].role == MsgRole.USER and "Do not call any tool" in messages[-1].content
             return LLMResponse(text="From what I gathered: n is 1.")
@@ -397,6 +400,10 @@ async def test_step_exhaustion_ends_with_an_answer_not_a_refusal(plat):
     assert ans.text == "From what I gathered: n is 1."
     assert ans.plane == "data" and ans.skills_used == ["peek"]
     assert ans.diagnostics["exhausted"] is True and ans.diagnostics["usage"]["calls"] == 4
+    # The closing call keeps the very same tools (tool_choice "none" forbids a
+    # call): changing the tool list mid-turn would invalidate the model's
+    # thinking blocks and the prompt cache.
+    assert all(names == offered[0] for names in offered) and "peek" in offered[0]
 
 
 async def test_fetch_skill_filters_and_limits_large_feeds(plat):

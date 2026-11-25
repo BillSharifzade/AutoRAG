@@ -71,7 +71,11 @@ class OllamaGenerator:
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
         on_delta=None,  # interface parity; this adapter does not stream
+        tool_choice: str | None = None,
     ) -> LLMResponse:
+        if tool_choice == "none":
+            # Ollama has no tool_choice; not offering tools is the equivalent.
+            tools = None
         httpx = _httpx()
         payload: dict = {
             "model": self.model,

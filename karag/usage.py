@@ -11,7 +11,7 @@ import sqlite3
 import threading
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # Prompt caching changes what an input token costs: a cached read is billed at
@@ -23,11 +23,31 @@ CACHE_READ_WEIGHT = 0.1
 CACHE_WRITE_WEIGHT = 1.25
 
 
-def billable_input_tokens(usage: dict) -> int:
+def billable_input_tokens(usage: dict, model: str = "") -> int:
+    """Input tokens weighted by what they cost: cache reads at the model's
+    cache-read factor, cache writes at 1.25x."""
+    from .pricing import cache_read_factor  # noqa: PLC0415
+
     plain = int(usage.get("input_tokens", 0) or 0)
     read = int(usage.get("cache_read_input_tokens", 0) or 0)
     written = int(usage.get("cache_creation_input_tokens", 0) or 0)
-    return int(round(plain + read * CACHE_READ_WEIGHT + written * CACHE_WRITE_WEIGHT))
+    factor = cache_read_factor(model) if model else CACHE_READ_WEIGHT
+    return int(round(plain + read * factor + written * CACHE_WRITE_WEIGHT))
+
+
+def month_key(ts: float) -> str:
+    """"2026-11" for a UTC timestamp — the period a monthly budget covers."""
+    return time.strftime("%Y-%m", time.gmtime(ts))
+
+
+def month_bounds(key: str) -> tuple[float, float]:
+    """UTC [start, end) timestamps of a "YYYY-MM" month."""
+    import calendar
+
+    year, month = (int(x) for x in key.split("-"))
+    start = calendar.timegm((year, month, 1, 0, 0, 0))
+    nxt = (year + month // 12, month % 12 + 1)
+    return float(start), float(calendar.timegm((nxt[0], nxt[1], 1, 0, 0, 0)))
 
 
 # per-tenant event history kept for the usage dashboard's activity charts
@@ -52,6 +72,7 @@ class UsageRecorder:
         self._by_tenant: dict[str, UsageTotals] = defaultdict(UsageTotals)
         self._by_user: dict[tuple[str, str], UsageTotals] = defaultdict(UsageTotals)
         self._by_model: dict[tuple[str, str], UsageTotals] = defaultdict(UsageTotals)
+        self._by_month: dict[tuple[str, str, str], UsageTotals] = defaultdict(UsageTotals)
         self._events_by_tenant: dict[str, deque[dict]] = defaultdict(
             lambda: deque(maxlen=_EVENT_HISTORY)
         )
@@ -60,10 +81,10 @@ class UsageRecorder:
         self, *, tenant_id: str, user_id: str, usage: dict | None, model: str = ""
     ) -> None:
         usage = usage or {}
-        inp = billable_input_tokens(usage)
-        out = int(usage.get("output_tokens", 0) or 0)
         # A fallback request is billed at the model that actually served it.
         served_by = str(usage.get("served_by") or model or "")
+        inp = billable_input_tokens(usage, served_by)
+        out = int(usage.get("output_tokens", 0) or 0)
         for bucket in (self._by_tenant[tenant_id], self._by_user[(tenant_id, user_id)]):
             bucket.requests += 1
             bucket.input_tokens += inp
@@ -72,6 +93,10 @@ class UsageRecorder:
         by_model.requests += 1
         by_model.input_tokens += inp
         by_model.output_tokens += out
+        month = self._by_month[(tenant_id, month_key(time.time()), served_by)]
+        month.requests += 1
+        month.input_tokens += inp
+        month.output_tokens += out
         self._events_by_tenant[tenant_id].append(
             {"ts": time.time(), "input_tokens": inp, "output_tokens": out,
              "model": served_by}
@@ -96,6 +121,14 @@ class UsageRecorder:
             model: totals
             for (tid, model), totals in self._by_model.items()
             if tid == tenant_id
+        }
+
+    def tenant_month_by_model(self, tenant_id: str, month: str) -> dict[str, UsageTotals]:
+        """Per-model totals for one calendar month (UTC) — what a budget counts."""
+        return {
+            model: totals
+            for (tid, m, model), totals in self._by_month.items()
+            if tid == tenant_id and m == month
         }
 
 
@@ -145,9 +178,9 @@ class SqliteUsageRecorder:
         self, *, tenant_id: str, user_id: str, usage: dict | None, model: str = ""
     ) -> None:
         usage = usage or {}
-        inp = billable_input_tokens(usage)
-        out = int(usage.get("output_tokens", 0) or 0)
         served_by = str(usage.get("served_by") or model or "")
+        inp = billable_input_tokens(usage, served_by)
+        out = int(usage.get("output_tokens", 0) or 0)
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO usage_events (tenant_id, user_id, ts, input_tokens, "
@@ -184,6 +217,20 @@ class SqliteUsageRecorder:
             r["model"]: UsageTotals(
                 requests=r["n"], input_tokens=r["i"], output_tokens=r["o"]
             )
+            for r in rows
+        }
+
+    def tenant_month_by_model(self, tenant_id: str, month: str) -> dict[str, UsageTotals]:
+        start, end = month_bounds(month)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT model, COUNT(*) AS n, COALESCE(SUM(input_tokens),0) AS i,"
+                " COALESCE(SUM(output_tokens),0) AS o FROM usage_events"
+                " WHERE tenant_id=? AND ts >= ? AND ts < ? GROUP BY model",
+                (tenant_id, start, end),
+            ).fetchall()
+        return {
+            r["model"]: UsageTotals(requests=r["n"], input_tokens=r["i"], output_tokens=r["o"])
             for r in rows
         }
 

@@ -25,6 +25,11 @@ from ..domain import Vector
 # returned :class:`LLMResponse`.
 DeltaCallback = Callable[[str], Awaitable[None]]
 
+# Sent through a DeltaCallback (instead of text) when the text streamed so far
+# must be thrown away — a provider failed mid-answer and another one is about
+# to start over. A streaming client clears what it has shown and keeps reading.
+STREAM_RESET = "\x00karag:reset\x00"
+
 
 class MsgRole(str, Enum):
     SYSTEM = "system"
@@ -54,6 +59,12 @@ class ChatMessage:
     # populated only for role == USER with image attachments; adapters that
     # cannot send images simply ignore them.
     images: list[ImagePart] | None = None
+    # The provider's own content blocks for an assistant turn produced inside
+    # the current tool loop (thinking blocks included), replayed verbatim by
+    # the adapter named in ``provider``. Other adapters use ``content`` and
+    # ``tool_calls`` instead, so a mid-turn fallback still works.
+    provider_blocks: list | None = None
+    provider: str = ""
 
 
 @dataclass
@@ -78,6 +89,9 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"  # end_turn | tool_use | refusal | max_tokens
     usage: dict = field(default_factory=dict)
+    # see ChatMessage.provider_blocks
+    provider_blocks: list | None = None
+    provider: str = ""
 
 
 @runtime_checkable
@@ -98,7 +112,11 @@ class Generator(Protocol):
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
         on_delta: DeltaCallback | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse: ...
+    # ``tool_choice="none"`` keeps the tools on offer (so the request prefix,
+    # and any cache or reasoning bound to it, is unchanged) while forbidding a
+    # call. Callers pass it only when set, so minimal generators may omit it.
 
 
 @dataclass
@@ -126,8 +144,11 @@ class Gateway:
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
         on_delta: DeltaCallback | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
-        extra = {"on_delta": on_delta} if on_delta is not None else {}
+        extra: dict = {"on_delta": on_delta} if on_delta is not None else {}
+        if tool_choice is not None:
+            extra["tool_choice"] = tool_choice
         return await self.generator.generate(
             system=system, messages=messages, tools=tools, **extra
         )

@@ -1,0 +1,65 @@
+name: CI
+
+# Every push and pull request: the offline backend suite (no keys, no
+# network), the pgvector integration tests against a real Postgres, and the
+# console's type-check, lint and production build. The answer-quality
+# evaluation (evals/) calls paid models and is run by hand.
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: karag
+          POSTGRES_PASSWORD: karag
+          POSTGRES_DB: karag
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U karag"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev,api,anthropic,pgvector,mysql,secrets,ingestion,fast]"
+      - name: Undefined names and unused imports (pyflakes rules)
+        run: ruff check karag evals scripts --select F
+      - name: Offline suite
+        run: python -m pytest -q
+      - name: pgvector integration
+        env:
+          KARAG_TEST_PG_DSN: host=127.0.0.1 port=5432 dbname=karag user=karag password=karag
+        run: python -m pytest -q tests/integration/test_pgvector.py
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        run: npm run build

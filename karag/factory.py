@@ -88,7 +88,29 @@ def _build_single_generator(s: Settings, name: str) -> Generator:
     if name == "anthropic":
         from .llm.anthropic_adapter import AnthropicGenerator
 
-        return AnthropicGenerator(model=s.anthropic_model, api_key=s.anthropic_api_key)
+        return AnthropicGenerator(
+            model=s.anthropic_model,
+            api_key=s.anthropic_api_key,
+            workspace_id=s.anthropic_workspace_id,
+            effort=s.anthropic_effort,
+            max_tokens=s.anthropic_max_tokens,
+            refusal_fallback=s.anthropic_refusal_fallback,
+        )
+    if name == "anthropic_backup":
+        # A second Anthropic account as a link in the fallback chain — a
+        # different key (and quota) behind the primary one.
+        from .llm.anthropic_adapter import AnthropicGenerator
+
+        if not s.backup_anthropic_api_key:
+            raise ConfigError("anthropic_backup needs KARAG_BACKUP_ANTHROPIC_API_KEY")
+        return AnthropicGenerator(
+            model=s.backup_anthropic_model,
+            api_key=s.backup_anthropic_api_key,
+            workspace_id=s.backup_anthropic_workspace_id,
+            effort=s.anthropic_effort,
+            max_tokens=s.anthropic_max_tokens,
+            refusal_fallback=s.anthropic_refusal_fallback,
+        )
     if name == "openai":
         from .llm.openai_gen import OpenAIGenerator
 
@@ -100,13 +122,24 @@ def _build_single_generator(s: Settings, name: str) -> Generator:
     raise ConfigError(f"unknown generator: {name}")
 
 
+def fallback_names(s: Settings) -> list[str]:
+    """The configured fallback chain, primary excluded, duplicates dropped."""
+    names: list[str] = []
+    for raw in (s.fallback_generator or "").split(","):
+        name = raw.strip()
+        if name and name != s.generator and name not in names:
+            names.append(name)
+    return names
+
+
 def build_generator(s: Settings) -> Generator:
     primary = _build_single_generator(s, s.generator)
-    if s.fallback_generator and s.fallback_generator != s.generator:
-        from .llm.fallback import FallbackGenerator
+    fallbacks = fallback_names(s)
+    if not fallbacks:
+        return primary
+    from .llm.fallback import chain
 
-        return FallbackGenerator(primary, _build_single_generator(s, s.fallback_generator))
-    return primary
+    return chain([primary, *(_build_single_generator(s, n) for n in fallbacks)])
 
 
 def build_embedder(s: Settings) -> Embedder:
@@ -211,7 +244,30 @@ def build_engineer_generator(s: Settings) -> Generator | None:
         return None
     from .llm.anthropic_adapter import AnthropicGenerator
 
-    return AnthropicGenerator(model=s.engineer_model, api_key=s.anthropic_api_key)
+    return AnthropicGenerator(
+        model=s.engineer_model,
+        api_key=s.anthropic_api_key,
+        workspace_id=s.anthropic_workspace_id,
+        effort="high",
+        max_tokens=64000,
+        refusal_fallback=s.anthropic_refusal_fallback,
+    )
+
+
+def build_pdf_ocr(s: Settings):
+    """Reading scanned PDFs with Claude, when a key is configured and allowed."""
+    mode = (s.pdf_ocr or "auto").lower()
+    if mode in ("off", "0", "false", "none"):
+        return None
+    if not s.anthropic_api_key:
+        return None
+    from .llm.ocr import ClaudePdfReader
+
+    return ClaudePdfReader(
+        model=s.ocr_model or s.anthropic_model,
+        api_key=s.anthropic_api_key,
+        workspace_id=s.anthropic_workspace_id,
+    )
 
 
 def build_web_policy(s: Settings) -> "WebPolicy":
@@ -343,6 +399,8 @@ class Platform:
     # definitions that failed to materialise at boot (missing connector, unset
     # env var). Surfaced by /health so a broken skill is visible, not silent.
     skill_load_errors: list[str] = field(default_factory=list)
+    # rate limit + monthly budget (karag.budget)
+    guard: object | None = None
 
 
 def build_platform(
@@ -366,8 +424,13 @@ def build_platform(
         if reg.get(skill.tenant_id, skill.name) is None:
             reg.register(skill)
 
-    ingestion = IngestionService(store, gateway.embedder, audit=audit_log)
-    retrieval = RetrievalService(store, gateway.embedder, audit=audit_log)
+    ingestion = IngestionService(
+        store, gateway.embedder, audit=audit_log,
+        structured=s.contextual_chunks, ocr=build_pdf_ocr(s),
+    )
+    retrieval = RetrievalService(
+        store, gateway.embedder, audit=audit_log, mode=s.retrieval_mode
+    )
     rag = RagService(retrieval, gateway.generator)
     executor = SkillExecutor(reg, audit=audit_log)
     orchestrator = Orchestrator(
@@ -378,6 +441,7 @@ def build_platform(
         engineer_generator=build_engineer_generator(s),
         min_score=s.min_score, max_per_document=s.max_per_document,
         skill_timeout_s=s.skill_timeout_s,
+        relative_floor=s.relative_floor, agentic_search=s.agentic_search,
     )
     assistants = build_assistant_registry(s)
     assistant_service = AssistantService(assistants, orchestrator)
@@ -408,6 +472,18 @@ def build_platform(
 
     directory = build_directory(s)
     alert_store = build_alert_store(s)
+
+    # Cost control: per-user rate limit + per-tenant monthly budget, checked
+    # by the orchestrator before every turn (console, API, assistants, bots).
+    from .budget import UsageGuard
+    from .pricing import PriceList
+
+    guard = UsageGuard(
+        usage_rec, PriceList.from_env(), directory=directory,
+        default_budget_usd=s.tenant_monthly_budget_usd,
+        per_minute=s.rate_limit_per_minute,
+    )
+    orchestrator.guard = guard
 
     # --- self-knowledge and self-modification --------------------------------
     codebase = CodebaseIndex(s.repo_root)
@@ -454,6 +530,7 @@ def build_platform(
         sources=sources,
         databases=databases,
         skill_load_errors=load_errors,
+        guard=guard,
     )
 
     # Operational skills need the assembled platform (they call its services

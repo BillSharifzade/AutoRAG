@@ -5,8 +5,9 @@ own AI over its own data: **knowledge** (RAG over documents, with citations) and
 **data** (verified, parameterized "skills" — never raw SQL to the model).
 
 Built provider-agnostic: the same code runs on a **deterministic offline fake**
-(tests), a **free local Ollama** model, or **Claude Opus 4.8** in production —
-selected by configuration, no application changes.
+(tests), a **free local Ollama** model, or **Claude** in production (Sonnet 5.5
+for answers, Opus 5.5 for code changes, Haiku 5.5 for reading scans — chosen by
+measurement, see `evals/`) — selected by configuration, no application changes.
 
 ## Why this shape
 
@@ -39,13 +40,15 @@ karag/
   orchestrator.py   agentic loop unifying both planes under one principal
   scheduler.py      stored alert rules + the loop that evaluates them
   pricing.py        per-model token pricing for the cost dashboard
-  api/              FastAPI app + pluggable auth (optional)
+  budget.py         per-tenant monthly budget + per-user rate limit
+  api/              FastAPI app (app.py) + routes/ (one module per area) + auth
   config.py         env-driven settings   factory.py  composition root
 sql/schema.sql      pgvector DDL          scripts/demo.py  end-to-end demo
-web/                Next.js console: chat, assistants, documents, skills, admin,
-                    audit, usage
-tests/              285 tests: RBAC, isolation, retrieval, RAG, skills, catalog,
-                    tenants, scheduler, language, orchestrator
+web/                Next.js console: chat, assistants, documents, data, skills,
+                    admin, audit, usage
+tests/              500+ offline tests: RBAC, isolation, retrieval, RAG, skills,
+                    catalog, tenants, scheduler, budgets, orchestrator
+evals/              answer-quality evaluation against a real model (see its README)
 ```
 
 ## Run
@@ -92,18 +95,25 @@ export KARAG_GENERATOR=ollama KARAG_EMBEDDER=ollama KARAG_EMBED_DIM=768
 PYTHONPATH=. .venv/bin/python scripts/demo.py
 ```
 
-### Production (Claude Opus 4.8 + pgvector)
+### Production (Claude + pgvector)
 
 ```bash
-.venv/bin/pip install anthropic 'psycopg[binary]' fastapi uvicorn pydantic httpx
+.venv/bin/pip install -e ".[api,anthropic,pgvector,secrets,ingestion,fast]"
 psql "$KARAG_PG_DSN" -f sql/schema.sql        # adjust vector(dim) to your embedder
-export KARAG_GENERATOR=anthropic KARAG_ANTHROPIC_MODEL=claude-opus-4-8
+export KARAG_GENERATOR=anthropic KARAG_ANTHROPIC_MODEL=claude-sonnet-5-5
+export KARAG_ANTHROPIC_EFFORT=medium KARAG_FALLBACK_GENERATOR=openai
 export ANTHROPIC_API_KEY=sk-ant-...
-export KARAG_EMBEDDER=ollama KARAG_STORE=pgvector KARAG_PG_DSN=postgresql://...
+# an organisation-scoped key also needs: KARAG_ANTHROPIC_WORKSPACE_ID=wrkspc_...
+export KARAG_EMBEDDER=openai KARAG_STORE=pgvector KARAG_PG_DSN=postgresql://...
 export KARAG_TOKENS="tkn_ceo:koinoti:ceo1:ceo,tkn_fin:koinoti:fin1:finance"
 export KARAG_APP_STORE=sqlite KARAG_APP_DB=./karag_app.db   # tenants, skills, audit
-PYTHONPATH=. .venv/bin/uvicorn karag.api.app:app
+PYTHONPATH=. .venv/bin/python scripts/serve.py
 ```
+
+A knowledge base built before hybrid retrieval keeps working as is (the
+keyword index fills itself on start-up); to embed old passages with their
+titles like new ones, run `PYTHONPATH=. .venv/bin/python
+scripts/reindex_documents.py --apply` once.
 
 ### The three processes
 
@@ -164,12 +174,27 @@ another tenant's data.
   (`KARAG_MIN_SCORE`); sources are fenced and labelled as untrusted data.
   Re-adding a document under an existing title *replaces* the old copy
   (`scripts/dedupe_documents.py` cleans up databases filled before this).
+* **Hybrid retrieval** — a vector search and a keyword search (BM25 over
+  stemmed Russian / Tajik / English terms, codes like `АМК-875` kept whole) run
+  side by side and are fused by reciprocal rank; SQLite uses FTS5, Postgres its
+  full-text index. Documents are chunked by section, each passage embedded with
+  its title and heading, tables split between rows with the header repeated.
+  A relevance gate shows only passages close to the best one
+  (`KARAG_RELATIVE_FLOOR`), and the model can call `search_documents` to look
+  again with better words. Answers list only the sources they actually cite.
+* **Answer-quality evaluation** — `evals/`: 63 questions with known answers
+  (facts, leaks, abstentions, SQL analytics, Tajik/English) against a
+  15-document corpus plus look-alikes, run on the real model; it measured the
+  retrieval changes and chose the model.
 * **Retrieval-time RBAC + tenant isolation** — enforced inside the store.
 * **Real data connectors** — read-only SQL (`SqlConnector`, SQLite + Postgres,
   with statement guards/row limits/timeouts) and REST; `make_sql_skill` turns a
   parameterized query into a verified, tenant-scoped skill.
 * **Document ingestion** — `ingest_file` extracts text from `.docx/.xlsx/.pptx/
   .csv/.txt/.md` (stdlib) and `.pdf` (via `pypdf`) into the knowledge plane.
+  Word headings and tables survive as Markdown; spreadsheet rows become
+  self-describing `column: value` lines. A scanned PDF (no text layer) is read
+  by Claude (`KARAG_PDF_OCR`, Haiku 5.5 by default) or refused with a reason.
 * **Office generation (Phase 1.5)** — valid `.xlsx/.docx/.pptx/.csv` via stdlib
   OOXML, verified to open in LibreOffice; returned as `Artifact`s (bytes never
   enter the model's context).
@@ -186,7 +211,11 @@ another tenant's data.
   connection — the assistant may write its own read-only SELECT through a
   `query_<name>` skill (read-only transaction, row limit, timeout, every query
   audited and shown with the answer). Credentials are sealed at rest with
-  `KARAG_SECRET_KEY` and never served back.
+  `KARAG_SECRET_KEY` and never served back. A table can be given a narrower
+  audience than its database (salaries → HR only) or hidden: a query naming a
+  table the caller is not cleared for is refused before it runs, functions
+  that execute SQL from a string (`query_to_xml`, `dblink`…) are refused, and
+  large or narrowed schemas reach the model on demand, filtered per caller.
 * **Runtime skill registry** — skills live as *data*, not code: register a
   read-only connection, author a parameterised SQL/REST skill through the API or
   the `/skills` console page, test it (the executed query and rows come back),
@@ -206,6 +235,11 @@ another tenant's data.
   by the model that actually served each request (a fallback is billed to the
   fallback), priced at read time from a configurable rate table (`KARAG_PRICING`).
   An unpriced model is reported as such rather than guessed.
+* **Cost control** — a monthly model budget per tenant (set by a platform
+  operator on the Admin page, or `KARAG_TENANT_MONTHLY_BUDGET_USD`) and a
+  per-user rate limit (`KARAG_RATE_LIMIT_PER_MINUTE`), checked before every
+  turn in the console, the API, assistants and the bots (HTTP 429 with a plain
+  reason). The Usage page shows this month's spend against the budget.
 * **Multilingual (RU / TJ / EN)** — the answer always follows the language of
   the question, whatever language the documents are in. The console's own
   interface is Russian by default with English one click away.
@@ -223,7 +257,7 @@ another tenant's data.
   100, destructive actions need an explicit confirm, and `platform_admin` /
   `karag_engineer` can never be granted this way.
 * **Guarded self-modification** — a `karag_engineer` can ask for a source
-  change. It is written on a fresh git branch by Opus 4.8, the full suite runs
+  change. It is written on a fresh git branch by Opus 5.5, the full suite runs
   against it, and the diff waits on the Engineering page for a human to apply
   or discard; the running tree is never touched. Four independent gates:
   the platform-level role (grantable only by a platform operator), a
@@ -271,18 +305,33 @@ another tenant's data.
   `field_compare`, `always`), never evaluated code, and a rule can never be given
   roles its creator does not hold — so scheduling an alert is not a way to read a
   class you are not cleared for. Failing rules back off exponentially.
-* **Generators** — `fake` (offline), `ollama` (free), `anthropic` (Claude Opus
-  4.8, production target), `openai` (GPT; default `gpt-5.5`, keeps reasoning while
-  tool-calling — live-verified end to end).
+* **Generators** — `fake` (offline), `ollama` (free), `anthropic` (Claude
+  Sonnet 5.5 by default: adaptive thinking at an effort level, thinking blocks
+  replayed through tool loops, server-side refusal fallback, workspace-scoped
+  keys), `openai` (GPT; default `gpt-5.5`). `KARAG_FALLBACK_GENERATOR` takes a
+  chain (`anthropic_backup,openai`); a reply cut off by a failing provider is
+  reset in the console before the next one starts over.
 * **Embedders** — `fake`, `ollama` (free), `openai`, `voyage` (multilingual).
-* **Stores** — `memory`, `sqlite` (persistent, stdlib), `pgvector` (validated
-  against real Postgres 18 + pgvector 0.8.5).
+* **Stores** — `memory`, `sqlite` (persistent, stdlib; float32 vectors cached
+  per tenant and scored off the request loop, numpy when installed), `pgvector`
+  (pooled connections, HNSW index, upgrades an existing table on first use;
+  validated against real Postgres + pgvector).
 * **Ops** — `Dockerfile` + `docker-compose.yml` (API + pgvector + Ollama).
 
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest -q          # 457 offline tests (5 env-gated skips)
+.venv/bin/python -m pytest -q          # 505 offline tests (7 env-gated skips)
+.venv/bin/ruff check karag evals scripts --select F
+```
+
+CI (`.github/workflows/ci.yml`) runs both, the pgvector integration tests
+against a real Postgres, and the console's type-check, lint and build.
+
+Answer quality is measured separately, against the real model (costs cents):
+
+```bash
+PYTHONPATH=. .venv/bin/python evals/run_eval.py --stress --label mychange
 ```
 
 The pgvector store has a real integration test, run it against a live database:

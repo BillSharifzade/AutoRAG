@@ -120,7 +120,7 @@ def _heuristic_payload(profile: Profile, url: str, language: str) -> dict:
         "suggested_name": last.replace("-", " ").replace("_", " ").title()[:60],
         "suggested_description": (f"Данные с {host}: {last}" if ru else f"Data from {host}: {last}"),
         "fields": [
-            {"name": f.name, "meaning": ("/".join(f.types) + (f" · " + str(f.samples[0]) if f.samples else ""))}
+            {"name": f.name, "meaning": ("/".join(f.types) + (" · " + str(f.samples[0]) if f.samples else ""))}
             for f in profile.fields[:40]
         ],
         "concerns": [] if profile.record_count or profile.kind != "records" else

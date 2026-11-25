@@ -125,6 +125,7 @@ class DirectoryStore(Protocol):
     def get_tenant(self, tenant_id: str) -> Tenant | None: ...
     def list_tenants(self) -> list[Tenant]: ...
     def set_tenant_active(self, tenant_id: str, active: bool) -> bool: ...
+    def update_tenant_settings(self, tenant_id: str, settings: dict) -> bool: ...
     def create_account(self, account: Account) -> Account: ...
     def get_account(self, tenant_id: str, user_id: str) -> Account | None: ...
     def list_accounts(self, tenant_id: str) -> list[Account]: ...
@@ -155,6 +156,13 @@ class InMemoryDirectory:
         if t is None:
             return False
         t.active = active
+        return True
+
+    def update_tenant_settings(self, tenant_id: str, settings: dict) -> bool:
+        t = self._tenants.get(tenant_id)
+        if t is None:
+            return False
+        t.settings = dict(settings)
         return True
 
     def create_account(self, account: Account) -> Account:
@@ -257,6 +265,14 @@ class SqliteDirectory:
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "UPDATE tenants SET active=? WHERE id=?", (int(active), tenant_id)
+            )
+        return cur.rowcount > 0
+
+    def update_tenant_settings(self, tenant_id: str, settings: dict) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE tenants SET settings=? WHERE id=?",
+                (json.dumps(settings, ensure_ascii=False), tenant_id),
             )
         return cur.rowcount > 0
 
@@ -392,6 +408,28 @@ class DirectoryService:
         if "platform_admin" not in principal.roles:
             raise AccessDenied("suspending a tenant requires the platform_admin role")
         return self._store.set_tenant_active(tenant_id, active)
+
+    def set_tenant_budget(
+        self, principal: Principal, tenant_id: str, monthly_usd: float | None
+    ) -> bool:
+        """The tenant's monthly model budget (USD); ``None`` removes the cap.
+
+        A platform operator's decision, like suspension: a tenant admin
+        raising their own cap would make the cap meaningless.
+        """
+        if "platform_admin" not in principal.roles:
+            raise AccessDenied("setting a budget requires the platform_admin role")
+        if monthly_usd is not None and monthly_usd < 0:
+            raise ValidationError("a budget cannot be negative")
+        tenant = self._store.get_tenant(tenant_id)
+        if tenant is None:
+            return False
+        settings = dict(tenant.settings or {})
+        if monthly_usd is None:
+            settings.pop("monthly_budget_usd", None)
+        else:
+            settings["monthly_budget_usd"] = round(float(monthly_usd), 2)
+        return self._store.update_tenant_settings(tenant_id, settings)
 
     # ---- accounts (tenant admins) ---------------------------------------
 

@@ -18,6 +18,7 @@ import { errorWords, roleLabel, whenWords } from "@/lib/words";
 import { AudienceBadge } from "@/components/audience";
 import { ApiWizard } from "@/components/data/api-wizard";
 import { DbWizard } from "@/components/data/db-wizard";
+import { TableAccess } from "@/components/data/table-access";
 import { Switch } from "@/components/skills/bits";
 import { ConfirmAction, EASE, Empty, Notice, PageHero, Restricted, Stagger, StaggerItem } from "@/components/pro";
 import { Button } from "@/components/ui";
@@ -221,6 +222,7 @@ function DbCard({
         {m.data_class && <AudienceBadge value={m.data_class} />}
         {(m.required_roles ?? []).length > 0 && <span className="text-faint">{m.required_roles!.map(roleLabel).join(", ")}</span>}
       </div>
+      {m.free_query && <TableAccess c={c} onChange={onChange} onError={onError} />}
     </div>
   );
 }

@@ -615,7 +615,10 @@ function OnboardingTip({ onAsk }: { onAsk: (query: string) => void }) {
 
 function StatusLine({ status }: { status: TurnStatus }) {
   const t = useT();
-  const text = status.tool
+  const searching = status.tool === "search_documents";
+  const text = searching
+    ? t("chat.status.search")
+    : status.tool
     ? t("chat.status.tool", { skill: humanise(status.tool) })
     : status.stage === "retrieving"
       ? t("chat.status.retrieving")
@@ -629,7 +632,7 @@ function StatusLine({ status }: { status: TurnStatus }) {
     >
       <BrandLogo mark className="size-6" />
       <span className="flex items-center gap-2">
-        {status.tool ? <Wrench className="size-3.5 text-accent" /> : <TypingDots />}
+        {status.tool && !searching ? <Wrench className="size-3.5 text-accent" /> : <TypingDots />}
         {text}
       </span>
     </motion.div>

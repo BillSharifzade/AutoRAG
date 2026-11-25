@@ -27,6 +27,26 @@ class VectorStore(Protocol):
         top_k: int = 5,
     ) -> list[RetrievedChunk]: ...
 
+    async def keyword_search(
+        self,
+        *,
+        tenant_id: str,
+        terms: list[str],
+        allowed_classes: frozenset[DataClass],
+        top_k: int = 5,
+        query_embedding: Vector | None = None,
+    ) -> list[RetrievedChunk]:
+        """Passages matching the question's words (BM25-style ranking).
+
+        The same contract as ``search``: tenant-scoped and class-filtered
+        inside the store. ``terms`` come from ``karag.knowledge.lexical`` so
+        the store and the indexer agree on what a word is. When
+        ``query_embedding`` is given, each hit also carries its cosine
+        similarity (``dense_score``) so the caller can judge relevance on one
+        scale whichever search found it.
+        """
+        ...
+
     async def list_documents(
         self, *, tenant_id: str, allowed_classes: frozenset[DataClass]
     ) -> list[DocumentSummary]:

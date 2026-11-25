@@ -94,6 +94,11 @@ export const admin: Dictionary = {
     "admin.companies.emptyHint":
       "Each company gets its own sealed space for knowledge, people and data.",
     "admin.companies.suspended": "suspended",
+    "admin.budget.label": "Monthly AI budget, USD (empty = no limit)",
+    "admin.budget.none": "no limit",
+    "admin.budget.of": "{spent} of {budget} this month",
+    "admin.budget.unlimited": "{spent} this month · no limit",
+    "admin.budget.invalid": "Enter an amount in dollars, or leave it empty for no limit.",
     "admin.companies.added": "Added {when}",
   },
   ru: {
@@ -186,6 +191,11 @@ export const admin: Dictionary = {
     "admin.companies.emptyHint":
       "У каждой компании своё закрытое пространство для знаний, людей и данных.",
     "admin.companies.suspended": "приостановлена",
+    "admin.budget.label": "Месячный бюджет на ИИ, USD (пусто — без лимита)",
+    "admin.budget.none": "без лимита",
+    "admin.budget.of": "{spent} из {budget} в этом месяце",
+    "admin.budget.unlimited": "{spent} в этом месяце · без лимита",
+    "admin.budget.invalid": "Укажите сумму в долларах или оставьте поле пустым — без лимита.",
     "admin.companies.added": "Добавлена {when}",
   },
 };

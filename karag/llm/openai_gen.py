@@ -59,7 +59,11 @@ class OpenAIGenerator:
         self.timeout = timeout
 
     def _body(
-        self, system: str, messages: list[ChatMessage], tools: list[ToolSpec] | None
+        self,
+        system: str,
+        messages: list[ChatMessage],
+        tools: list[ToolSpec] | None,
+        tool_choice: str | None = None,
     ) -> dict:
         body: dict = {
             "model": self.model,
@@ -83,6 +87,8 @@ class OpenAIGenerator:
                 }
                 for t in tools
             ]
+            if tool_choice in ("none", "auto"):
+                body["tool_choice"] = tool_choice
         return body
 
     async def generate(
@@ -92,6 +98,7 @@ class OpenAIGenerator:
         messages: list[ChatMessage],
         tools: list[ToolSpec] | None = None,
         on_delta=None,  # accepted for interface parity; this adapter does not stream
+        tool_choice: str | None = None,
     ) -> LLMResponse:
         if not self._api_key:
             raise ConfigError("OPENAI_API_KEY is not set")
@@ -100,7 +107,7 @@ class OpenAIGenerator:
             resp = await client.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json=self._body(system, messages, tools),
+                json=self._body(system, messages, tools, tool_choice),
             )
             if resp.status_code >= 400:
                 raise GenerationError(

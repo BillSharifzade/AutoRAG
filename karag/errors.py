@@ -42,3 +42,15 @@ class ValidationError(KaragError):
 
 class GenerationError(KaragError):
     """The underlying LLM provider failed."""
+
+
+class RateLimited(KaragError):
+    """A user sent more requests than the per-minute allowance."""
+
+    def __init__(self, message: str, retry_after: int = 60) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class BudgetExceeded(KaragError):
+    """The tenant has spent its monthly model budget."""

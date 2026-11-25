@@ -7,18 +7,48 @@ class is supplied it defaults to the most restrictive one.
 
 from __future__ import annotations
 
+import os
+from typing import Awaitable, Callable
+
 from ..audit import AuditEvent, AuditLog, NullAuditLog
 from ..domain import Chunk, DataClass, Document, Principal, new_id
-from ..errors import AccessDenied
+from ..errors import AccessDenied, ValidationError
 from ..ingestion import extract_text
 from ..llm.base import Embedder
 from ..rbac import can_ingest, visible_classes
 from ..vectorstore.base import VectorStore
-from .chunking import chunk_text
+from .chunking import HEADING_SEP, Piece, chunk_document, chunk_text
+
+# Reads a scanned PDF's pages and returns their text (see karag.llm.ocr).
+PdfOcr = Callable[[bytes], Awaitable[str]]
+
+# Below this many characters per page a PDF is treated as a scan: a real text
+# layer has hundreds; a scan has none, or a stray page number.
+_SCAN_CHARS_PER_PAGE = 40
 
 
 def _same_title(a: str, b: str) -> bool:
     return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+
+
+def _section(heading: str, title: str) -> str:
+    """The heading path without a first level that only repeats the title."""
+    parts = [p for p in heading.split(HEADING_SEP) if p]
+    if parts and _same_title(parts[0], title):
+        parts = parts[1:]
+    return HEADING_SEP.join(parts)
+
+
+def embedding_text(title: str, heading: str, text: str) -> str:
+    """What a passage is embedded as: the passage *with* its context.
+
+    "Оклад — 4 200 сомони" alone says little; under "Положение об оплате
+    труда › Должностные оклады" it says exactly what it is. The context is
+    added only to the embedding input — the stored and displayed text is the
+    passage itself.
+    """
+    head = f"{title} — {heading}" if heading else title
+    return f"{head}\n\n{text}"
 
 
 class IngestionService:
@@ -30,12 +60,17 @@ class IngestionService:
         max_chars: int = 800,
         overlap: int = 120,
         audit: AuditLog | None = None,
+        structured: bool = True,
+        ocr: PdfOcr | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
         self._max_chars = max_chars
         self._overlap = overlap
         self._audit = audit or NullAuditLog()
+        # section-aware chunks embedded together with their title + heading
+        self._structured = structured
+        self._ocr = ocr
 
     async def ingest_file(
         self,
@@ -48,9 +83,28 @@ class IngestionService:
         metadata: dict | None = None,
     ) -> Document:
         """Extract text from a real document (.docx/.xlsx/.pptx/.pdf/.csv/.txt/.md)
-        and ingest it into the knowledge plane."""
+        and ingest it into the knowledge plane.
+
+        A PDF without a text layer (a scan, a photo of a page) is read by the
+        configured OCR model; with none configured it is refused with a reason
+        rather than stored as an empty document nobody can find.
+        """
         text = extract_text(filename, data)
         meta = {"filename": filename, **(metadata or {})}
+        if os.path.splitext(filename)[1].lower() == ".pdf":
+            from ..ingestion.readers import pdf_page_count  # noqa: PLC0415
+
+            pages = max(1, pdf_page_count(data))
+            if len(text.strip()) < _SCAN_CHARS_PER_PAGE * pages:
+                if self._ocr is None:
+                    raise ValidationError(
+                        "this PDF has no text layer (it looks scanned) and page "
+                        "reading is switched off (KARAG_PDF_OCR)"
+                    )
+                text = (await self._ocr(data)).strip()
+                meta["ocr"] = True
+        if not text.strip():
+            raise ValidationError(f"no text could be read from {filename}")
         title = (metadata or {}).get("title") or filename
         return await self.ingest_document(
             principal,
@@ -119,7 +173,15 @@ class IngestionService:
             metadata=meta,
         )
 
-        pieces = chunk_text(text, max_chars=self._max_chars, overlap=self._overlap)
+        if self._structured:
+            pieces = [
+                Piece(p.text, _section(p.heading, title))
+                for p in chunk_document(text, max_chars=self._max_chars, overlap=self._overlap)
+            ]
+        else:
+            pieces = [
+                Piece(t) for t in chunk_text(text, max_chars=self._max_chars, overlap=self._overlap)
+            ]
         detail = {"title": title, "data_class": klass.value, "chunks": len(pieces)}
         if replaced:
             detail["replaced"] = replaced
@@ -130,7 +192,11 @@ class IngestionService:
         if not pieces:
             return doc
 
-        embeddings = await self._embedder.embed(pieces)
+        inputs = [
+            embedding_text(title, p.heading, p.text) if self._structured else p.text
+            for p in pieces
+        ]
+        embeddings = await self._embedder.embed(inputs)
         chunks = [
             Chunk(
                 id=new_id("chunk"),
@@ -138,10 +204,11 @@ class IngestionService:
                 tenant_id=doc.tenant_id,
                 data_class=doc.data_class,
                 ordinal=i,
-                text=piece,
+                text=piece.text,
                 title=doc.title,
                 source_uri=doc.source_uri,
                 embedding=emb,
+                heading=piece.heading,
             )
             for i, (piece, emb) in enumerate(zip(pieces, embeddings))
         ]

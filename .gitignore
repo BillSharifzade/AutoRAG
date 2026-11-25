@@ -33,3 +33,7 @@ demo_sales.db
 
 # Generated testbench fixtures (rebuild with testbench/build.py)
 testbench/build/
+
+# Evaluation caches and run outputs
+evals/.cache/
+evals/results/

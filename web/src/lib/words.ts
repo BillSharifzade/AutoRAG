@@ -149,6 +149,8 @@ export function sizeWords(bytes: number): string {
 /** Turn an API failure into something that says what to do next. */
 export function errorWords(message: string): string {
   const m = message.toLowerCase();
+  if (m.includes("monthly ai budget")) return tr("err.budget");
+  if (m.includes("too many requests") || m.includes("429")) return tr("err.rate");
   if (m.includes("403") || m.includes("forbidden") || m.includes("denied"))
     return tr("err.forbidden");
   if (m.includes("401") || m.includes("unauthorized")) return tr("err.expired");
